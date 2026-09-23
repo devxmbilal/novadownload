@@ -27,6 +27,9 @@ export function formatEta(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || !isFinite(seconds) || seconds < 0) {
     return '--:--';
   }
+  if (seconds === 0) {
+    return 'Done';
+  }
 
   const s = Math.floor(seconds);
   const hrs = Math.floor(s / 3600);

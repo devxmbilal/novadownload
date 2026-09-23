@@ -25,11 +25,11 @@ export const DownloadDetailPanel: React.FC = () => {
     return null;
   }
 
-  const percentage = selectedDownload.status === 'completed'
+  const percentage: number | null = selectedDownload.status === 'completed'
     ? 100
     : (selectedDownload.file_size && selectedDownload.file_size > 0
         ? Math.min(100, Math.round((selectedDownload.downloaded_size / selectedDownload.file_size) * 100))
-        : (selectedDownload.downloaded_size > 0 ? 50 : 0));
+        : null); // null = indeterminate, never show a fake percentage
 
   const displayTotalSize = selectedDownload.file_size || (selectedDownload.status === 'completed' ? selectedDownload.downloaded_size : null);
 

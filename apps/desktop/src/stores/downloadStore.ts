@@ -58,11 +58,14 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           const existing = state.downloads.find((d) => d.id === fresh.id);
           if (existing) {
             if (existing.status === 'downloading' || existing.status === 'processing') {
+              // While actively downloading, trust the live in-memory state for
+              // downloaded_size, speed, eta — but take the max for safety.
               const canonicalDownloaded = Math.max(existing.downloaded_size, fresh.downloaded_size);
+              // total size is immutable once set — never let it decrease
               const canonicalTotal = existing.file_size || fresh.file_size;
               const canonicalPct = canonicalTotal && canonicalTotal > 0
-                ? Math.min(100, Math.max(existing.percentage || 0, (canonicalDownloaded / canonicalTotal) * 100))
-                : (existing.percentage || fresh.percentage || 0);
+                ? Math.min(100, Math.max(existing.percentage ?? 0, (canonicalDownloaded / canonicalTotal) * 100))
+                : (existing.percentage ?? fresh.percentage ?? 0);
 
               return {
                 ...fresh,
@@ -74,11 +77,12 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
                 average_speed: existing.average_speed || fresh.average_speed,
                 eta: existing.eta,
                 active_connections: existing.active_connections,
-                progress_sequence: Math.max(existing.progress_sequence || 0, fresh.progress_sequence || 0),
+                progress_sequence: Math.max(existing.progress_sequence ?? 0, fresh.progress_sequence ?? 0),
                 thumbnail: existing.thumbnail || fresh.thumbnail,
               };
             }
             if (fresh.status === 'completed') {
+              // For completed downloads, derive size and percentage from canonical bytes.
               const finalSize = fresh.file_size || fresh.downloaded_size || existing.file_size || existing.downloaded_size;
               return {
                 ...fresh,
@@ -93,7 +97,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               };
             }
           }
-          return fresh;
+          // For paused/failed/etc derive percentage from bytes if we have total size
+          const pct = fresh.file_size && fresh.file_size > 0
+            ? Math.min(100, (fresh.downloaded_size / fresh.file_size) * 100)
+            : (fresh.percentage ?? 0);
+          return { ...fresh, percentage: pct };
         });
         return { downloads: merged, isLoading: false };
       });
@@ -275,13 +283,16 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         set((state) => ({
           downloads: state.downloads.map((d) => {
             if (d.id === download_id) {
+              const isComplete = status === 'completed';
+              const isPaused = status === 'paused' || status === 'failed' || status === 'cancelled';
               return {
                 ...d,
                 status: status as any,
                 error_message: error || null,
-                speed: status === 'completed' || status === 'paused' || status === 'failed' ? 0 : d.speed,
-                eta: status === 'completed' ? 0 : d.eta,
-                percentage: status === 'completed' ? 100 : d.percentage,
+                // Stop speed/eta for terminal states
+                speed: isComplete || isPaused ? 0 : d.speed,
+                eta: isComplete ? null : d.eta,
+                percentage: isComplete ? 100 : d.percentage,
               };
             }
             return d;
