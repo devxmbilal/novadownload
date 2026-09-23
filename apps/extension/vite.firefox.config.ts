@@ -9,7 +9,7 @@ function generateFirefoxManifestPlugin(): Plugin {
       const manifest = {
         manifest_version: 2,
         name: 'NovaDownload Integration',
-        version: '1.0.0',
+        version: '1.1.0',
         description: 'Send downloads and media streams directly to NovaDownload Desktop Accelerator.',
         permissions: [
           'contextMenus',

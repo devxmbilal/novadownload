@@ -179,7 +179,7 @@ export const Sidebar: React.FC = () => {
 
       {/* Footer Info */}
       <div className="pt-3 border-t border-sidebar-border text-[11px] text-muted-foreground/70 flex items-center justify-between px-2">
-        <span>v1.0.0</span>
+        <span>v1.1.0</span>
         <span>IDM Engine</span>
       </div>
     </aside>

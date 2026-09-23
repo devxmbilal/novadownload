@@ -52,9 +52,38 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
   fetchDownloads: async () => {
     try {
-      set({ isLoading: true, error: null });
-      const downloads = await invoke<Download[]>('list_downloads');
-      set({ downloads, isLoading: false });
+      const freshDownloads = await invoke<Download[]>('list_downloads');
+      set((state) => {
+        const merged = freshDownloads.map((fresh) => {
+          const existing = state.downloads.find((d) => d.id === fresh.id);
+          if (existing) {
+            if (existing.status === 'downloading' || existing.status === 'processing') {
+              return {
+                ...fresh,
+                status: existing.status,
+                downloaded_size: Math.max(existing.downloaded_size, fresh.downloaded_size),
+                file_size: existing.file_size || fresh.file_size,
+                percentage: Math.max(existing.percentage || 0, fresh.percentage || 0),
+                speed: existing.speed,
+                average_speed: existing.average_speed || fresh.average_speed,
+                eta: existing.eta,
+                active_connections: existing.active_connections,
+                thumbnail: existing.thumbnail || fresh.thumbnail,
+              };
+            }
+            if (fresh.status === 'completed') {
+              return {
+                ...fresh,
+                percentage: 100,
+                thumbnail: existing.thumbnail || fresh.thumbnail,
+                average_speed: existing.average_speed || fresh.average_speed,
+              };
+            }
+          }
+          return fresh;
+        });
+        return { downloads: merged, isLoading: false };
+      });
     } catch (e: any) {
       set({ error: e?.toString() || 'Failed to fetch downloads', isLoading: false });
     }

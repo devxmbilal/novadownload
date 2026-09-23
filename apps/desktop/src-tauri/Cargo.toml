@@ -1,6 +1,6 @@
 [package]
 name = "novadownload"
-version = "1.0.0"
+version = "1.1.0"
 description = "NovaDownload - Professional Desktop Download Manager"
 authors = ["NovaDownload Contributors"]
 license = "MIT"

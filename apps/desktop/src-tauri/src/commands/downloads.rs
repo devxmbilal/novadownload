@@ -371,6 +371,7 @@ pub async fn create_media_download(
         let mut max_overall_pct: f64 = 0.0;
         let mut max_downloaded_bytes: i64 = 0;
         let mut latest_speed: f64 = 0.0;
+        let mut locked_total_size: i64 = 0;
 
         if let Ok(mut child) = cmd.spawn() {
             if let Some(stdout) = child.stdout.take() {
@@ -389,7 +390,7 @@ pub async fn create_media_download(
                         let _ = app_handle.emit("download:progress", serde_json::json!({
                             "download_id": dl_id,
                             "downloaded_size": max_downloaded_bytes,
-                            "file_size": if stream_sizes.is_empty() { None } else { Some(stream_sizes.iter().sum::<i64>()) },
+                            "file_size": if locked_total_size > 0 { Some(locked_total_size) } else { None },
                             "percentage": 99.0,
                             "speed": 0.0,
                             "average_speed": latest_speed,
@@ -429,8 +430,12 @@ pub async fn create_media_download(
                             video_size + audio_size
                         };
 
-                        let computed_downloaded = if estimated_total > 0 {
-                            ((max_overall_pct / 100.0) * (estimated_total as f64)) as i64
+                        if estimated_total > locked_total_size {
+                            locked_total_size = estimated_total;
+                        }
+
+                        let computed_downloaded = if locked_total_size > 0 {
+                            ((max_overall_pct / 100.0) * (locked_total_size as f64)) as i64
                         } else {
                             0
                         };
@@ -440,7 +445,7 @@ pub async fn create_media_download(
                         let _ = app_handle.emit("download:progress", serde_json::json!({
                             "download_id": dl_id,
                             "downloaded_size": max_downloaded_bytes,
-                            "file_size": if estimated_total > 0 { Some(estimated_total) } else { None },
+                            "file_size": if locked_total_size > 0 { Some(locked_total_size) } else { None },
                             "percentage": max_overall_pct,
                             "speed": speed,
                             "average_speed": speed,
