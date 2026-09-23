@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "NovaDownload Integration",
+  "version": "1.0.0",
+  "description": "Send downloads and media streams directly to NovaDownload Desktop Accelerator.",
+  "permissions": [
+    "contextMenus",
+    "activeTab",
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:64123/*",
+    "http://localhost:64123/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_title": "NovaDownload"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/index.ts"],
+      "run_at": "document_idle"
+    }
+  ]
+}

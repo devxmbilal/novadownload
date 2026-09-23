@@ -1,0 +1,21 @@
+{
+  "name": "@novadownload/extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NovaDownload Browser Extension for Chrome and Firefox",
+  "scripts": {
+    "build:chrome": "vite build --config vite.chrome.config.ts",
+    "build:firefox": "vite build --config vite.firefox.config.ts",
+    "build": "npm run build:chrome",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@novadownload/shared-types": "*",
+    "@novadownload/shared-utils": "*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}
