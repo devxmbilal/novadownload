@@ -43,6 +43,7 @@ pub struct MediaDownloadRequest {
     pub directory: Option<String>,
     pub file_name: Option<String>,
     pub quality_label: Option<String>,
+    pub thumbnail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

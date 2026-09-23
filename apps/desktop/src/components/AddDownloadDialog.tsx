@@ -157,6 +157,7 @@ export const AddDownloadDialog: React.FC = () => {
         is_audio_only: isAudioOnly,
         directory: directory.trim() || undefined,
         file_name: fileName.trim() || (mediaInfo?.title ?? 'media_download'),
+        thumbnail: mediaInfo?.thumbnail || undefined,
       };
 
       await invoke('create_media_download', { request });

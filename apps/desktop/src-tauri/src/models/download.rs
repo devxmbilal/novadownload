@@ -67,6 +67,7 @@ pub struct Download {
     pub average_speed: f64,
     pub eta: Option<i64>,
     pub error_message: Option<String>,
+    pub thumbnail: Option<String>,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,

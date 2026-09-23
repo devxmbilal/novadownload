@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     average_speed REAL NOT NULL DEFAULT 0.0,
     eta INTEGER,
     error_message TEXT,
+    thumbnail TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
     completed_at TEXT,

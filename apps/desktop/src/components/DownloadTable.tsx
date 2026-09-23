@@ -188,10 +188,21 @@ export const DownloadTable: React.FC = () => {
                       isSelected ? 'table-row-selected' : ''
                     }`}
                   >
-                    {/* File Name & Icon */}
+                    {/* File Name & Icon / Thumbnail */}
                     <td className="py-2.5 px-3 max-w-xs truncate">
-                      <div className="flex items-center gap-2">
-                        {getFileIcon(dl.file_name, dl.mime_type)}
+                      <div className="flex items-center gap-2.5">
+                        {dl.thumbnail ? (
+                          <div className="w-9 h-6 rounded bg-background border border-border overflow-hidden flex-shrink-0">
+                            <img
+                              src={dl.thumbnail}
+                              alt={dl.file_name}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                          </div>
+                        ) : (
+                          getFileIcon(dl.file_name, dl.mime_type)
+                        )}
                         <span className="font-medium text-foreground truncate" title={dl.file_name}>
                           {dl.file_name}
                         </span>

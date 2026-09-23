@@ -4,6 +4,7 @@ interface UIState {
   currentView: 'downloads' | 'dashboard' | 'scheduled';
   isAddDialogOpen: boolean;
   prefilledUrl: string;
+  viewMode: 'list' | 'grid';
   isSettingsOpen: boolean;
   isDetailsOpen: boolean;
   contextMenu: {
@@ -14,6 +15,7 @@ interface UIState {
   };
 
   setCurrentView: (view: 'downloads' | 'dashboard' | 'scheduled') => void;
+  setViewMode: (mode: 'list' | 'grid') => void;
   openAddDialog: (url?: string) => void;
   closeAddDialog: () => void;
   openSettings: () => void;
@@ -27,6 +29,7 @@ export const useUIStore = create<UIState>((set) => ({
   currentView: 'downloads',
   isAddDialogOpen: false,
   prefilledUrl: '',
+  viewMode: 'list',
   isSettingsOpen: false,
   isDetailsOpen: true,
   contextMenu: {
@@ -36,7 +39,8 @@ export const useUIStore = create<UIState>((set) => ({
     downloadId: null,
   },
 
-  setCurrentView: (view ) => set({ currentView: view }),
+  setCurrentView: (view) => set({ currentView: view }),
+  setViewMode: (mode) => set({ viewMode: mode }),
   openAddDialog: (url = '') => set({ isAddDialogOpen: true, prefilledUrl: url }),
   closeAddDialog: () => set({ isAddDialogOpen: false, prefilledUrl: '' }),
   openSettings: () => set({ isSettingsOpen: true }),

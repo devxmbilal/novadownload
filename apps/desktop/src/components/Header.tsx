@@ -1,12 +1,12 @@
 import React from 'react';
-import { Plus, Play, Pause, Search, Settings, Gauge, DownloadCloud } from 'lucide-react';
+import { Plus, Play, Pause, Search, Settings, Gauge, DownloadCloud, LayoutList, LayoutGrid } from 'lucide-react';
 import { useDownloadStore } from '../stores/downloadStore';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 
 export const Header: React.FC = () => {
   const { pauseAll, resumeAll, searchQuery, setSearchQuery } = useDownloadStore();
-  const { openAddDialog, openSettings } = useUIStore();
+  const { openAddDialog, openSettings, viewMode, setViewMode } = useUIStore();
   const { settings, updateSettings } = useSettingsStore();
 
   const handleSpeedLimitChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -79,8 +79,34 @@ export const Header: React.FC = () => {
         </div>
       </div>
 
-      {/* Search & Settings */}
+      {/* View Switcher, Search & Settings */}
       <div className="flex items-center gap-2">
+        {/* View Mode Toggle */}
+        <div className="flex items-center bg-secondary/80 p-0.5 rounded-lg border border-border/60">
+          <button
+            onClick={() => setViewMode('list')}
+            className={`p-1.5 rounded-md transition cursor-pointer ${
+              viewMode === 'list'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            title="List View (Table)"
+          >
+            <LayoutList className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setViewMode('grid')}
+            className={`p-1.5 rounded-md transition cursor-pointer ${
+              viewMode === 'grid'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            title="Grid View (Cards & Thumbnails)"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
         <div className="relative">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -88,7 +114,7 @@ export const Header: React.FC = () => {
             placeholder="Search downloads..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-48 pl-8 pr-3 py-1.5 rounded-md bg-secondary/70 hover:bg-secondary border border-border/50 focus:border-primary focus:bg-background text-xs outline-none transition"
+            className="w-44 pl-8 pr-3 py-1.5 rounded-md bg-secondary/70 hover:bg-secondary border border-border/50 focus:border-primary focus:bg-background text-xs outline-none transition"
           />
         </div>
 

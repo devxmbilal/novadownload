@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { DownloadTable } from './components/DownloadTable';
+import { DownloadGridView } from './components/DownloadGridView';
 import { DownloadDetailPanel } from './components/DownloadDetailPanel';
 import { AddDownloadDialog } from './components/AddDownloadDialog';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -24,7 +25,7 @@ export function App() {
   } = useDownloadStore();
 
   const { fetchSettings, detectFFmpeg } = useSettingsStore();
-  const { currentView, openAddDialog, openSettings } = useUIStore();
+  const { currentView, openAddDialog, openSettings, viewMode } = useUIStore();
 
   useEffect(() => {
     // Initial fetch
@@ -111,7 +112,7 @@ export function App() {
           <DashboardView />
         ) : (
           <main className="flex flex-1 overflow-hidden">
-            <DownloadTable />
+            {viewMode === 'grid' ? <DownloadGridView /> : <DownloadTable />}
             <DownloadDetailPanel />
           </main>
         )}

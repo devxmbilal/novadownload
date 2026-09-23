@@ -24,6 +24,9 @@ impl Database {
         let _ = conn.pragma_update(None, "foreign_keys", "ON");
         conn.execute_batch(crate::database::schema::CREATE_TABLES_SQL)?;
         
+        // Ensure migration for thumbnail column on existing database
+        let _ = conn.execute("ALTER TABLE downloads ADD COLUMN thumbnail TEXT", []);
+
         // Ensure default queue exists
         let exists: i64 = conn.query_row(
             "SELECT COUNT(*) FROM queues WHERE id = 'general'",
@@ -49,8 +52,8 @@ impl Database {
                 id, url, original_url, file_name, file_path, directory,
                 mime_type, file_size, downloaded_size, status, download_type,
                 total_connections, active_connections, speed, average_speed,
-                eta, error_message, created_at, started_at, completed_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                eta, error_message, thumbnail, created_at, started_at, completed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             params![
                 dl.id,
                 dl.url,
@@ -69,6 +72,7 @@ impl Database {
                 dl.average_speed,
                 dl.eta,
                 dl.error_message,
+                dl.thumbnail,
                 dl.created_at.to_rfc3339(),
                 dl.started_at.map(|t| t.to_rfc3339()),
                 dl.completed_at.map(|t| t.to_rfc3339()),
@@ -84,17 +88,17 @@ impl Database {
             r#"SELECT id, url, original_url, file_name, file_path, directory,
                       mime_type, file_size, downloaded_size, status, download_type,
                       total_connections, active_connections, speed, average_speed,
-                      eta, error_message, created_at, started_at, completed_at, updated_at
+                      eta, error_message, thumbnail, created_at, started_at, completed_at, updated_at
                FROM downloads WHERE id = ?"#,
         )?;
 
         let dl = stmt
             .query_row(params![id], |row| {
                 let status_str: String = row.get(9)?;
-                let created_str: String = row.get(17)?;
-                let started_str: Option<String> = row.get(18)?;
-                let completed_str: Option<String> = row.get(19)?;
-                let updated_str: String = row.get(20)?;
+                let created_str: String = row.get(18)?;
+                let started_str: Option<String> = row.get(19)?;
+                let completed_str: Option<String> = row.get(20)?;
+                let updated_str: String = row.get(21)?;
 
                 Ok(Download {
                     id: row.get(0)?,
@@ -114,6 +118,7 @@ impl Database {
                     average_speed: row.get(14)?,
                     eta: row.get(15)?,
                     error_message: row.get(16)?,
+                    thumbnail: row.get(17)?,
                     created_at: DateTime::parse_from_rfc3339(&created_str)
                         .map(|t| t.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
@@ -139,16 +144,16 @@ impl Database {
             r#"SELECT id, url, original_url, file_name, file_path, directory,
                       mime_type, file_size, downloaded_size, status, download_type,
                       total_connections, active_connections, speed, average_speed,
-                      eta, error_message, created_at, started_at, completed_at, updated_at
+                      eta, error_message, thumbnail, created_at, started_at, completed_at, updated_at
                FROM downloads ORDER BY created_at DESC"#,
         )?;
 
         let iter = stmt.query_map([], |row| {
             let status_str: String = row.get(9)?;
-            let created_str: String = row.get(17)?;
-            let started_str: Option<String> = row.get(18)?;
-            let completed_str: Option<String> = row.get(19)?;
-            let updated_str: String = row.get(20)?;
+            let created_str: String = row.get(18)?;
+            let started_str: Option<String> = row.get(19)?;
+            let completed_str: Option<String> = row.get(20)?;
+            let updated_str: String = row.get(21)?;
 
             Ok(Download {
                 id: row.get(0)?,
@@ -168,6 +173,7 @@ impl Database {
                 average_speed: row.get(14)?,
                 eta: row.get(15)?,
                 error_message: row.get(16)?,
+                thumbnail: row.get(17)?,
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .map(|t| t.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
