@@ -228,11 +228,16 @@ export const DownloadGridView: React.FC = () => {
 
                 {/* Live Speed & ETA / Actions Bar */}
                 <div className="pt-1 border-t border-border/40 flex items-center justify-between text-[11px]">
-                  <div className="font-mono text-[10px]">
+                  <div className="font-mono text-[10px] flex items-center gap-1.5">
                     {dl.status === 'downloading' ? (
-                      <span className="text-primary font-semibold">{formatSpeed(dl.speed)}</span>
+                      <>
+                        <span className="text-primary font-semibold">{formatSpeed(dl.speed)}</span>
+                        {dl.eta ? <span className="text-muted-foreground">• {formatEta(dl.eta)}</span> : null}
+                      </>
                     ) : dl.status === 'completed' ? (
-                      <span className="text-emerald-400">Done</span>
+                      <span className="text-emerald-400 font-medium">
+                        {dl.average_speed > 0 ? formatSpeed(dl.average_speed) : 'Done'}
+                      </span>
                     ) : (
                       <span className="text-muted-foreground">{dl.status}</span>
                     )}

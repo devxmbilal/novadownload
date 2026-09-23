@@ -266,9 +266,21 @@ pub async fn create_media_download(
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let settings = state.settings_mgr.get_settings().await;
+    let default_download_dir = dirs::download_dir()
+        .unwrap_or_else(|| PathBuf::from("C:\\NovaDownload"))
+        .to_string_lossy()
+        .to_string();
+
     let base_dir = request
         .directory
-        .unwrap_or_else(|| settings.default_download_directory.clone());
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or_else(|| {
+            if !settings.default_download_directory.trim().is_empty() {
+                settings.default_download_directory.clone()
+            } else {
+                default_download_dir
+            }
+        });
     
     let target_dir = if settings.auto_categorize {
         let cat = if request.is_audio_only { "Music" } else { "Videos" };
@@ -282,6 +294,7 @@ pub async fn create_media_download(
     };
 
     let _ = tokio::fs::create_dir_all(&target_dir).await;
+    let canonical_target_dir = std::fs::canonicalize(&target_dir).unwrap_or(target_dir);
 
     let ext = if request.is_audio_only { "mp3" } else { "mp4" };
     let raw_title = request.file_name.unwrap_or_else(|| "media_download".to_string());
@@ -292,7 +305,7 @@ pub async fn create_media_download(
         format!("{}.{}", clean_title, ext)
     };
 
-    let final_filepath = get_unique_filepath(&target_dir, &filename);
+    let final_filepath = get_unique_filepath(&canonical_target_dir, &filename);
     let dl_id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
@@ -302,7 +315,7 @@ pub async fn create_media_download(
         original_url: request.url.clone(),
         file_name: final_filepath.file_name().unwrap_or_default().to_string_lossy().to_string(),
         file_path: final_filepath.to_string_lossy().to_string(),
-        directory: target_dir.to_string_lossy().to_string(),
+        directory: canonical_target_dir.to_string_lossy().to_string(),
         mime_type: Some(if request.is_audio_only { "audio/mp3".to_string() } else { "video/mp4".to_string() }),
         file_size: None,
         downloaded_size: 0,
@@ -351,28 +364,84 @@ pub async fn create_media_download(
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let mut last_file_size: i64 = 0;
+        let start_time = std::time::Instant::now();
+        let mut stream_count: usize = 0;
+        let mut stream_sizes: Vec<i64> = Vec::new();
+        let mut last_stream_size: i64 = 0;
+        let mut max_overall_pct: f64 = 0.0;
+        let mut max_downloaded_bytes: i64 = 0;
+        let mut latest_speed: f64 = 0.0;
 
         if let Ok(mut child) = cmd.spawn() {
             if let Some(stdout) = child.stdout.take() {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    if let Some((pct, total_bytes, speed, eta)) = parse_ytdlp_line(&line) {
-                        if total_bytes > 0 {
-                            last_file_size = total_bytes;
+                    if line.contains("Destination:") {
+                        if last_stream_size > 0 {
+                            stream_sizes.push(last_stream_size);
                         }
-                        let effective_total = if total_bytes > 0 { total_bytes } else { last_file_size };
-                        let downloaded = if effective_total > 0 {
-                            ((pct / 100.0) * (effective_total as f64)) as i64
+                        stream_count += 1;
+                        last_stream_size = 0;
+                    }
+
+                    if line.contains("[Merger]") || line.contains("Merging") {
+                        max_overall_pct = 99.0;
+                        let _ = app_handle.emit("download:progress", serde_json::json!({
+                            "download_id": dl_id,
+                            "downloaded_size": max_downloaded_bytes,
+                            "file_size": if stream_sizes.is_empty() { None } else { Some(stream_sizes.iter().sum::<i64>()) },
+                            "percentage": 99.0,
+                            "speed": 0.0,
+                            "average_speed": latest_speed,
+                            "eta": 1,
+                            "active_connections": 1,
+                            "status": "processing"
+                        }));
+                        continue;
+                    }
+
+                    if let Some((raw_pct, total_bytes, speed, eta)) = parse_ytdlp_line(&line) {
+                        if total_bytes > 0 {
+                            last_stream_size = total_bytes;
+                        }
+                        if speed > 0.0 {
+                            latest_speed = speed;
+                        }
+
+                        let overall_pct = if is_audio || format_id.contains("audio") {
+                            raw_pct
+                        } else if stream_count <= 1 {
+                            raw_pct * 0.85
+                        } else {
+                            85.0 + (raw_pct * 0.13)
+                        };
+
+                        max_overall_pct = max_overall_pct.max(overall_pct).min(99.0);
+
+                        let estimated_total = if is_audio {
+                            if total_bytes > 0 { total_bytes } else { last_stream_size }
+                        } else if stream_count <= 1 {
+                            let curr = if total_bytes > 0 { total_bytes } else { last_stream_size };
+                            if curr > 0 { (curr as f64 / 0.85) as i64 } else { 0 }
+                        } else {
+                            let video_size = stream_sizes.get(0).copied().unwrap_or(last_stream_size * 5);
+                            let audio_size = if total_bytes > 0 { total_bytes } else { last_stream_size };
+                            video_size + audio_size
+                        };
+
+                        let computed_downloaded = if estimated_total > 0 {
+                            ((max_overall_pct / 100.0) * (estimated_total as f64)) as i64
                         } else {
                             0
                         };
 
+                        max_downloaded_bytes = max_downloaded_bytes.max(computed_downloaded);
+
                         let _ = app_handle.emit("download:progress", serde_json::json!({
                             "download_id": dl_id,
-                            "downloaded_size": downloaded,
-                            "file_size": if effective_total > 0 { Some(effective_total) } else { None },
-                            "percentage": pct,
+                            "downloaded_size": max_downloaded_bytes,
+                            "file_size": if estimated_total > 0 { Some(estimated_total) } else { None },
+                            "percentage": max_overall_pct,
                             "speed": speed,
                             "average_speed": speed,
                             "eta": if eta > 0 { Some(eta) } else { None },
@@ -402,7 +471,7 @@ pub async fn create_media_download(
                         .await
                         .map(|m| m.len() as i64)
                         .ok()
-                        .unwrap_or(last_file_size);
+                        .unwrap_or(max_downloaded_bytes);
 
                     let actual_filename = actual_path
                         .file_name()
@@ -411,9 +480,12 @@ pub async fn create_media_download(
                         .to_string();
                     let actual_filepath_str = actual_path.to_string_lossy().to_string();
 
+                    let elapsed_secs = start_time.elapsed().as_secs_f64().max(1.0);
+                    let avg_speed = (file_size as f64 / elapsed_secs).max(latest_speed);
+
                     let _ = db.update_download_file_path(&dl_id, &actual_filename, &actual_filepath_str).await;
                     let _ = db.update_download_file_size(&dl_id, file_size).await;
-                    let _ = db.update_download_progress(&dl_id, file_size, 0.0, 0.0, None, 0).await;
+                    let _ = db.update_download_progress(&dl_id, file_size, 0.0, avg_speed, None, 0).await;
                     let _ = db.update_download_status(&dl_id, DownloadStatus::Completed, None).await;
 
                     let _ = app_handle.emit("download:progress", serde_json::json!({
@@ -422,7 +494,7 @@ pub async fn create_media_download(
                         "file_size": file_size,
                         "percentage": 100.0,
                         "speed": 0.0,
-                        "average_speed": 0.0,
+                        "average_speed": avg_speed,
                         "eta": 0,
                         "active_connections": 0,
                         "status": "completed"

@@ -119,6 +119,24 @@ export function App() {
         )}
       </div>
 
+      {/* Bottom Status Bar / Footer */}
+      <footer className="h-6 px-4 bg-card/90 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground select-none z-20">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <span>Ready</span>
+          </span>
+          <span>•</span>
+          <span>NovaDownload Turbo Engine</span>
+        </div>
+        <div className="flex items-center gap-1 font-medium text-foreground/80 hover:text-foreground transition cursor-default">
+          <span>Made with</span>
+          <span className="text-rose-500 animate-pulse">❤️</span>
+          <span>in Pakistan</span>
+          <span className="text-sm ml-0.5">🇵🇰</span>
+        </div>
+      </footer>
+
       {/* Modals & Menus */}
       <AddDownloadDialog />
       <SettingsDialog />

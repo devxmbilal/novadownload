@@ -46,34 +46,30 @@ pub async fn open_file_or_dir(path: String) -> Result<(), String> {
 pub async fn show_in_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let win_path = path.replace('/', "\\");
         let p = std::path::Path::new(&win_path);
         if p.exists() {
             if p.is_dir() {
                 let _ = std::process::Command::new("explorer")
-                    .arg(&win_path)
+                    .raw_arg(format!("\"{}\"", win_path))
                     .spawn()
                     .map_err(|e| e.to_string())?;
             } else {
                 let _ = std::process::Command::new("explorer")
-                    .arg(format!("/select,{}", win_path))
+                    .raw_arg(format!("/select,\"{}\"", win_path))
                     .spawn()
-                    .or_else(|_| {
-                        std::process::Command::new("cmd")
-                            .args(&["/c", "explorer", &format!("/select,\"{}\"", win_path)])
-                            .spawn()
-                    })
                     .map_err(|e| e.to_string())?;
             }
         } else if let Some(parent) = p.parent() {
             let parent_win = parent.to_string_lossy().replace('/', "\\");
             let _ = std::process::Command::new("explorer")
-                .arg(&parent_win)
+                .raw_arg(format!("\"{}\"", parent_win))
                 .spawn()
                 .map_err(|e| e.to_string())?;
         } else {
             let _ = std::process::Command::new("explorer")
-                .arg(&win_path)
+                .raw_arg(format!("\"{}\"", win_path))
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }

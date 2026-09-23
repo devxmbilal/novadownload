@@ -135,6 +135,36 @@ export const DownloadTable: React.FC = () => {
     invoke('show_in_folder', { path });
   };
 
+  const formatDuration = (startStr?: string | null, endStr?: string | null) => {
+    if (!startStr) return '-';
+    try {
+      const start = new Date(startStr).getTime();
+      const end = endStr ? new Date(endStr).getTime() : Date.now();
+      const diffSec = Math.max(1, Math.round((end - start) / 1000));
+      if (diffSec < 60) return `${diffSec}s`;
+      const mins = Math.floor(diffSec / 60);
+      const secs = diffSec % 60;
+      return `${mins}m ${secs}s`;
+    } catch {
+      return '-';
+    }
+  };
+
+  const formatDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return '-';
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-background">
       {/* Table Content */}
@@ -142,15 +172,15 @@ export const DownloadTable: React.FC = () => {
         <table className="w-full text-left text-xs border-collapse">
           <thead className="sticky top-0 bg-card/90 backdrop-blur-md text-muted-foreground border-b border-border/80 z-10 select-none">
             <tr>
-              <th className="py-2.5 px-3 font-semibold w-72">File Name</th>
+              <th className="py-2.5 px-3 font-semibold w-64">File Name</th>
               <th className="py-2.5 px-2 font-semibold w-24">Status</th>
-              <th className="py-2.5 px-3 font-semibold w-48">Progress</th>
+              <th className="py-2.5 px-3 font-semibold w-40">Progress</th>
               <th className="py-2.5 px-2 font-semibold w-20">Size</th>
-              <th className="py-2.5 px-2 font-semibold w-24">Downloaded</th>
-              <th className="py-2.5 px-2 font-semibold w-20">Speed</th>
-              <th className="py-2.5 px-2 font-semibold w-16">ETA</th>
-              <th className="py-2.5 px-2 font-semibold w-16">Conn</th>
-              <th className="py-2.5 px-3 font-semibold text-right w-28">Actions</th>
+              <th className="py-2.5 px-2 font-semibold w-20">Downloaded</th>
+              <th className="py-2.5 px-2 font-semibold w-24">Speed</th>
+              <th className="py-2.5 px-2 font-semibold w-20">Time / ETA</th>
+              <th className="py-2.5 px-2 font-semibold w-28">Date & Time</th>
+              <th className="py-2.5 px-3 font-semibold text-right w-24">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/30">
@@ -247,23 +277,35 @@ export const DownloadTable: React.FC = () => {
                       {formatBytes(dl.downloaded_size)}
                     </td>
 
-                    {/* Speed */}
+                    {/* Speed / Average Speed */}
                     <td className="py-2.5 px-2 whitespace-nowrap font-mono">
                       {dl.status === 'downloading' ? (
                         <span className="text-primary font-semibold">{formatSpeed(dl.speed)}</span>
+                      ) : dl.average_speed > 0 ? (
+                        <span className="text-muted-foreground font-medium">{formatSpeed(dl.average_speed)}</span>
+                      ) : dl.speed > 0 ? (
+                        <span className="text-muted-foreground">{formatSpeed(dl.speed)}</span>
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
                     </td>
 
-                    {/* ETA */}
+                    {/* Time / Duration / ETA */}
                     <td className="py-2.5 px-2 whitespace-nowrap font-mono text-muted-foreground">
-                      {dl.status === 'downloading' ? formatEta(dl.eta) : '-'}
+                      {dl.status === 'downloading' ? (
+                        formatEta(dl.eta)
+                      ) : dl.status === 'completed' ? (
+                        <span className="text-emerald-400 font-medium">
+                          {formatDuration(dl.started_at || dl.created_at, dl.completed_at || dl.updated_at)}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
                     </td>
 
-                    {/* Connections */}
-                    <td className="py-2.5 px-2 whitespace-nowrap font-mono text-muted-foreground">
-                      {dl.status === 'downloading' ? `${dl.active_connections}/${dl.total_connections}` : dl.total_connections}
+                    {/* Date & Time */}
+                    <td className="py-2.5 px-2 whitespace-nowrap font-mono text-muted-foreground text-[11px]">
+                      {formatDateTime(dl.completed_at || dl.created_at)}
                     </td>
 
                     {/* Actions */}

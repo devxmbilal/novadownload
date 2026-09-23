@@ -81,3 +81,6 @@ async function sendUrlToDesktop(url: string, referrer?: string) {
     alert('NovaDownload Desktop is not running.');
   }
 }
+
+export {};
+
