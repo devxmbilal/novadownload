@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     eta INTEGER,
     error_message TEXT,
     thumbnail TEXT,
+    progress_sequence INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     started_at TEXT,
     completed_at TEXT,

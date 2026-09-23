@@ -58,23 +58,36 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           const existing = state.downloads.find((d) => d.id === fresh.id);
           if (existing) {
             if (existing.status === 'downloading' || existing.status === 'processing') {
+              const canonicalDownloaded = Math.max(existing.downloaded_size, fresh.downloaded_size);
+              const canonicalTotal = existing.file_size || fresh.file_size;
+              const canonicalPct = canonicalTotal && canonicalTotal > 0
+                ? Math.min(100, Math.max(existing.percentage || 0, (canonicalDownloaded / canonicalTotal) * 100))
+                : (existing.percentage || fresh.percentage || 0);
+
               return {
                 ...fresh,
                 status: existing.status,
-                downloaded_size: Math.max(existing.downloaded_size, fresh.downloaded_size),
-                file_size: existing.file_size || fresh.file_size,
-                percentage: Math.max(existing.percentage || 0, fresh.percentage || 0),
+                downloaded_size: canonicalDownloaded,
+                file_size: canonicalTotal,
+                percentage: canonicalPct,
                 speed: existing.speed,
                 average_speed: existing.average_speed || fresh.average_speed,
                 eta: existing.eta,
                 active_connections: existing.active_connections,
+                progress_sequence: Math.max(existing.progress_sequence || 0, fresh.progress_sequence || 0),
                 thumbnail: existing.thumbnail || fresh.thumbnail,
               };
             }
             if (fresh.status === 'completed') {
+              const finalSize = fresh.file_size || fresh.downloaded_size || existing.file_size || existing.downloaded_size;
               return {
                 ...fresh,
+                downloaded_size: finalSize,
+                file_size: finalSize,
                 percentage: 100,
+                speed: 0,
+                eta: null,
+                active_connections: 0,
                 thumbnail: existing.thumbnail || fresh.thumbnail,
                 average_speed: existing.average_speed || fresh.average_speed,
               };
@@ -185,24 +198,52 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
       set((state) => {
+        let isStale = false;
         const updatedDownloads = state.downloads.map((d) => {
           if (d.id === payload.download_id) {
+            // Sequence check: ignore stale/out-of-order events
+            if (
+              payload.progress_sequence !== undefined &&
+              d.progress_sequence !== undefined &&
+              payload.progress_sequence < d.progress_sequence
+            ) {
+              isStale = true;
+              return d;
+            }
+
+            const isCompleted = payload.status === 'completed';
+            const totalBytes = payload.file_size ?? d.file_size;
+            const downloadedBytes = isCompleted
+              ? (totalBytes ?? Math.max(d.downloaded_size, payload.downloaded_size))
+              : Math.max(d.downloaded_size, payload.downloaded_size);
+
+            const percentage = isCompleted
+              ? 100
+              : totalBytes && totalBytes > 0
+              ? Math.min(100, Math.max(d.percentage || 0, (downloadedBytes / totalBytes) * 100))
+              : payload.percentage;
+
             return {
               ...d,
-              downloaded_size: payload.downloaded_size,
-              file_size: payload.file_size ?? d.file_size,
-              percentage: payload.percentage,
-              speed: payload.speed,
+              downloaded_size: downloadedBytes,
+              file_size: totalBytes,
+              percentage,
+              speed: isCompleted ? 0 : payload.speed,
               average_speed: payload.average_speed,
-              eta: payload.eta,
-              active_connections: payload.active_connections,
+              eta: isCompleted ? null : payload.eta,
+              active_connections: isCompleted ? 0 : payload.active_connections,
               status: payload.status,
+              progress_sequence: payload.progress_sequence ?? ((d.progress_sequence || 0) + 1),
             };
           }
           return d;
         });
 
-        // Update speed history graph if selected download is downloading
+        if (isStale) {
+          return state;
+        }
+
+        // Update speed history graph if selected download is active
         let newHistory = state.speedHistory;
         if (state.selectedId === payload.download_id) {
           newHistory = [...state.speedHistory.slice(1), { time: nowStr, speed: payload.speed }];

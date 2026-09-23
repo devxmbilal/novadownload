@@ -135,18 +135,17 @@ export const DownloadGridView: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5">
         {filteredDownloads.map((dl) => {
           const isSelected = selectedId === dl.id;
-          const percentage =
-            dl.status === 'completed'
-              ? 100
-              : typeof dl.percentage === 'number' && dl.percentage > 0
-              ? Math.min(100, Math.round(dl.percentage))
-              : dl.file_size && dl.file_size > 0
-              ? Math.min(100, Math.round((dl.downloaded_size / dl.file_size) * 100))
-              : dl.downloaded_size > 0
-              ? 50
-              : 0;
+          const isCompleted = dl.status === 'completed';
+          const hasKnownSize = typeof dl.file_size === 'number' && dl.file_size > 0;
+          const percentage = isCompleted
+            ? 100
+            : hasKnownSize
+            ? Math.min(100, Math.max(0, Math.round((dl.downloaded_size / dl.file_size!) * 100)))
+            : typeof dl.percentage === 'number' && dl.percentage > 0
+            ? Math.min(100, Math.round(dl.percentage))
+            : null;
 
-          const displaySize = dl.file_size || (dl.status === 'completed' ? dl.downloaded_size : null);
+          const displaySize = dl.file_size || (isCompleted ? dl.downloaded_size : null);
 
           return (
             <div
@@ -204,25 +203,31 @@ export const DownloadGridView: React.FC = () => {
                 {/* Progress Bar */}
                 <div className="space-y-1">
                   <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
-                    <span className="font-semibold text-foreground">{percentage}%</span>
+                    <span className="font-semibold text-foreground">
+                      {percentage !== null ? `${percentage}%` : dl.status === 'downloading' ? 'Downloading...' : '-'}
+                    </span>
                     <span>
                       {formatBytes(dl.downloaded_size)}
                       {displaySize ? ` / ${formatBytes(displaySize)}` : ''}
                     </span>
                   </div>
-                  <div className="w-full bg-secondary/90 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        dl.status === 'completed'
-                          ? 'bg-emerald-500'
-                          : dl.status === 'failed'
-                          ? 'bg-rose-500'
-                          : dl.status === 'paused'
-                          ? 'bg-amber-500'
-                          : 'bg-gradient-to-r from-primary to-nova-400'
-                      }`}
-                      style={{ width: `${percentage}%` }}
-                    />
+                  <div className="w-full bg-secondary/90 rounded-full h-1.5 overflow-hidden relative">
+                    {percentage !== null ? (
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ease-out ${
+                          dl.status === 'completed'
+                            ? 'bg-emerald-500'
+                            : dl.status === 'failed'
+                            ? 'bg-rose-500'
+                            : dl.status === 'paused'
+                            ? 'bg-amber-500'
+                            : 'bg-gradient-to-r from-primary to-nova-400'
+                        }`}
+                        style={{ width: `${percentage}%` }}
+                      />
+                    ) : (
+                      <div className="h-full w-1/3 bg-primary rounded-full animate-indeterminate" />
+                    )}
                   </div>
                 </div>
 

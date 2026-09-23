@@ -72,30 +72,67 @@ impl SpeedTracker {
             current_speed
         };
 
-        // Calculate ETA
+        // Calculate ETA strictly: remaining / current_speed (None if speed <= 0)
         let eta = if let Some(total) = self.total_bytes {
             let remaining = total - current_downloaded;
             if remaining <= 0 {
                 Some(0)
+            } else if current_speed > 0.0 {
+                Some((remaining as f64 / current_speed).ceil() as i64)
             } else {
-                let speed_for_eta = if current_speed > 1024.0 {
-                    current_speed
-                } else if average_speed > 1024.0 {
-                    average_speed
-                } else {
-                    0.0
-                };
-
-                if speed_for_eta > 0.0 {
-                    Some((remaining as f64 / speed_for_eta).ceil() as i64)
-                } else {
-                    None
-                }
+                None
             }
         } else {
             None
         };
 
         (current_speed, average_speed, eta)
+    }
+
+    pub fn average_speed(&self) -> f64 {
+        let now = Instant::now();
+        let total_elapsed = now.duration_since(self.start_time).as_secs_f64();
+        if let Some(last) = self.samples.back() {
+            let total_downloaded_in_session = last.bytes - self.initial_downloaded;
+            if total_elapsed > 0.1 && total_downloaded_in_session > 0 {
+                total_downloaded_in_session as f64 / total_elapsed
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    #[test]
+    fn test_speed_tracker_basic() {
+        let mut tracker = SpeedTracker::new(0, Some(100_000_000), 2.5);
+        sleep(Duration::from_millis(100));
+        let (speed, avg_speed, eta) = tracker.record_progress(1_000_000);
+        assert!(speed > 0.0);
+        assert!(avg_speed > 0.0);
+        assert!(eta.is_some());
+    }
+
+    #[test]
+    fn test_speed_tracker_zero_speed_null_eta() {
+        let mut tracker = SpeedTracker::new(1000, Some(100_000_000), 2.5);
+        let (speed, _, eta) = tracker.record_progress(1000); // 0 bytes downloaded
+        assert_eq!(speed, 0.0);
+        assert_eq!(eta, None);
+    }
+
+    #[test]
+    fn test_speed_tracker_completed_zero_eta() {
+        let mut tracker = SpeedTracker::new(0, Some(1000), 2.5);
+        let (_, _, eta) = tracker.record_progress(1000);
+        assert_eq!(eta, Some(0));
     }
 }

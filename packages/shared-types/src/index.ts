@@ -39,6 +39,7 @@ export interface Download {
   error_message: string | null;
   thumbnail?: string | null;
   percentage?: number;
+  progress_sequence?: number;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -103,6 +104,7 @@ export interface DownloadProgressPayload {
   eta: number | null;
   active_connections: number;
   status: DownloadStatus;
+  progress_sequence: number;
 }
 
 export interface AddDownloadRequest {

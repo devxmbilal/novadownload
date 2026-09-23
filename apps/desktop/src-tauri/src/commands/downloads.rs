@@ -87,6 +87,7 @@ pub async fn create_download(
         eta: None,
         error_message: None,
         thumbnail: None,
+        progress_sequence: 0,
         created_at: now,
         started_at: None,
         completed_at: None,
@@ -328,6 +329,7 @@ pub async fn create_media_download(
         eta: None,
         error_message: None,
         thumbnail: request.thumbnail.clone(),
+        progress_sequence: 0,
         created_at: now,
         started_at: Some(now),
         completed_at: None,
@@ -372,6 +374,7 @@ pub async fn create_media_download(
         let mut max_downloaded_bytes: i64 = 0;
         let mut latest_speed: f64 = 0.0;
         let mut locked_total_size: i64 = 0;
+        let mut progress_sequence: u64 = 0;
 
         if let Ok(mut child) = cmd.spawn() {
             if let Some(stdout) = child.stdout.take() {
@@ -387,6 +390,7 @@ pub async fn create_media_download(
 
                     if line.contains("[Merger]") || line.contains("Merging") {
                         max_overall_pct = 99.0;
+                        progress_sequence += 1;
                         let _ = app_handle.emit("download:progress", serde_json::json!({
                             "download_id": dl_id,
                             "downloaded_size": max_downloaded_bytes,
@@ -396,7 +400,8 @@ pub async fn create_media_download(
                             "average_speed": latest_speed,
                             "eta": 1,
                             "active_connections": 1,
-                            "status": "processing"
+                            "status": "processing",
+                            "progress_sequence": progress_sequence
                         }));
                         continue;
                     }
@@ -441,6 +446,7 @@ pub async fn create_media_download(
                         };
 
                         max_downloaded_bytes = max_downloaded_bytes.max(computed_downloaded);
+                        progress_sequence += 1;
 
                         let _ = app_handle.emit("download:progress", serde_json::json!({
                             "download_id": dl_id,
@@ -451,7 +457,8 @@ pub async fn create_media_download(
                             "average_speed": speed,
                             "eta": if eta > 0 { Some(eta) } else { None },
                             "active_connections": 1,
-                            "status": "downloading"
+                            "status": "downloading",
+                            "progress_sequence": progress_sequence
                         }));
                     }
                 }
@@ -487,10 +494,11 @@ pub async fn create_media_download(
 
                     let elapsed_secs = start_time.elapsed().as_secs_f64().max(1.0);
                     let avg_speed = (file_size as f64 / elapsed_secs).max(latest_speed);
+                    progress_sequence += 1;
 
                     let _ = db.update_download_file_path(&dl_id, &actual_filename, &actual_filepath_str).await;
                     let _ = db.update_download_file_size(&dl_id, file_size).await;
-                    let _ = db.update_download_progress(&dl_id, file_size, 0.0, avg_speed, None, 0).await;
+                    let _ = db.update_download_progress(&dl_id, file_size, 0.0, avg_speed, None, 0, progress_sequence).await;
                     let _ = db.update_download_status(&dl_id, DownloadStatus::Completed, None).await;
 
                     let _ = app_handle.emit("download:progress", serde_json::json!({
@@ -502,7 +510,8 @@ pub async fn create_media_download(
                         "average_speed": avg_speed,
                         "eta": 0,
                         "active_connections": 0,
-                        "status": "completed"
+                        "status": "completed",
+                        "progress_sequence": progress_sequence
                     }));
 
                     let _ = app_handle.emit("download:status_changed", serde_json::json!({

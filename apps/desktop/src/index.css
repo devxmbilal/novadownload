@@ -111,3 +111,19 @@
   background: hsl(var(--primary) / 0.35);
   color: hsl(var(--foreground));
 }
+
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(150%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+.animate-indeterminate {
+  animation: indeterminate 1.8s infinite ease-in-out;
+}

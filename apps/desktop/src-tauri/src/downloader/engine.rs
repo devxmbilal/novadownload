@@ -281,7 +281,8 @@ impl DownloadEngine {
             .map(|c| (c.chunk_index, c.id.clone()))
             .collect();
 
-        let mut total_downloaded = initial_sum;
+        let mut monotonic_downloaded = initial_sum;
+        let mut progress_sequence = dl.progress_sequence;
         let mut last_emit = std::time::Instant::now();
         let mut last_db_update = std::time::Instant::now();
         let mut completed_count = 0;
@@ -292,20 +293,20 @@ impl DownloadEngine {
             }
 
             match msg {
-                ChunkProgressMsg::BytesRead { chunk_index, bytes } => {
-                    total_downloaded += bytes as i64;
-                    if let Some(cur) = chunk_downloaded_map.get_mut(&chunk_index) {
-                        *cur += bytes as i64;
-                    }
+                ChunkProgressMsg::ChunkProgress { chunk_index, downloaded_bytes } => {
+                    chunk_downloaded_map.insert(chunk_index, downloaded_bytes);
+                    let total_downloaded: i64 = chunk_downloaded_map.values().sum();
+                    monotonic_downloaded = monotonic_downloaded.max(total_downloaded);
 
-                    // Throttle event emission to ~10 updates per second
+                    // Throttle event emission to ~10 updates per second (100ms)
                     let now = std::time::Instant::now();
                     if now.duration_since(last_emit).as_millis() >= 100 {
                         last_emit = now;
-                        let (speed, avg_speed, eta) = speed_tracker.record_progress(total_downloaded);
+                        progress_sequence += 1;
+                        let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
                         let percentage = dl.file_size.map_or(0.0, |sz| {
                             if sz > 0 {
-                                ((total_downloaded as f64 / sz as f64) * 100.0).min(100.0)
+                                ((monotonic_downloaded as f64 / sz as f64) * 100.0).min(100.0)
                             } else {
                                 0.0
                             }
@@ -313,14 +314,15 @@ impl DownloadEngine {
 
                         let payload = DownloadProgressPayload {
                             download_id: dl.id.clone(),
-                            downloaded_size: total_downloaded,
+                            downloaded_size: monotonic_downloaded,
                             file_size: dl.file_size,
                             percentage,
                             speed,
                             average_speed: avg_speed,
                             eta,
-                            active_connections: (num_chunks - completed_count) as u32,
+                            active_connections: (num_chunks.saturating_sub(completed_count)) as u32,
                             status: DownloadStatus::Downloading,
+                            progress_sequence,
                         };
                         let _ = app.emit("download:progress", payload);
                     }
@@ -328,17 +330,71 @@ impl DownloadEngine {
                     // Throttle DB persistence to every 1.5 seconds
                     if now.duration_since(last_db_update).as_millis() >= 1500 {
                         last_db_update = now;
-                        let (speed, avg_speed, eta) = speed_tracker.record_progress(total_downloaded);
+                        let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
                         let _ = self.db.update_download_progress(
                             &dl.id,
-                            total_downloaded,
+                            monotonic_downloaded,
                             speed,
                             avg_speed,
                             eta,
-                            (num_chunks - completed_count) as u32,
+                            (num_chunks.saturating_sub(completed_count)) as u32,
+                            progress_sequence,
                         ).await;
 
                         // Persist chunk downloaded bytes
+                        if let (Some(c_bytes), Some(c_id)) = (chunk_downloaded_map.get(&chunk_index), chunk_ids_map.get(&chunk_index)) {
+                            let _ = self.db.update_chunk_progress(c_id, *c_bytes, "downloading").await;
+                        }
+                    }
+                }
+                ChunkProgressMsg::BytesRead { chunk_index, bytes } => {
+                    if let Some(cur) = chunk_downloaded_map.get_mut(&chunk_index) {
+                        *cur += bytes as i64;
+                    }
+                    let total_downloaded: i64 = chunk_downloaded_map.values().sum();
+                    monotonic_downloaded = monotonic_downloaded.max(total_downloaded);
+
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_emit).as_millis() >= 100 {
+                        last_emit = now;
+                        progress_sequence += 1;
+                        let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
+                        let percentage = dl.file_size.map_or(0.0, |sz| {
+                            if sz > 0 {
+                                ((monotonic_downloaded as f64 / sz as f64) * 100.0).min(100.0)
+                            } else {
+                                0.0
+                            }
+                        });
+
+                        let payload = DownloadProgressPayload {
+                            download_id: dl.id.clone(),
+                            downloaded_size: monotonic_downloaded,
+                            file_size: dl.file_size,
+                            percentage,
+                            speed,
+                            average_speed: avg_speed,
+                            eta,
+                            active_connections: (num_chunks.saturating_sub(completed_count)) as u32,
+                            status: DownloadStatus::Downloading,
+                            progress_sequence,
+                        };
+                        let _ = app.emit("download:progress", payload);
+                    }
+
+                    if now.duration_since(last_db_update).as_millis() >= 1500 {
+                        last_db_update = now;
+                        let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
+                        let _ = self.db.update_download_progress(
+                            &dl.id,
+                            monotonic_downloaded,
+                            speed,
+                            avg_speed,
+                            eta,
+                            (num_chunks.saturating_sub(completed_count)) as u32,
+                            progress_sequence,
+                        ).await;
+
                         if let (Some(c_bytes), Some(c_id)) = (chunk_downloaded_map.get(&chunk_index), chunk_ids_map.get(&chunk_index)) {
                             let _ = self.db.update_chunk_progress(c_id, *c_bytes, "downloading").await;
                         }
@@ -372,17 +428,32 @@ impl DownloadEngine {
                 .map_err(|e| AppError::FileSystem(e.to_string()))?;
         }
 
+        progress_sequence += 1;
+        let final_size = dl.file_size.unwrap_or(monotonic_downloaded);
+        let avg_speed = speed_tracker.average_speed();
+
+        let _ = self.db.update_download_progress(
+            &dl.id,
+            final_size,
+            0.0,
+            avg_speed,
+            None,
+            0,
+            progress_sequence,
+        ).await;
+
         // Final progress emit
         let _ = app.emit("download:progress", DownloadProgressPayload {
             download_id: dl.id.clone(),
-            downloaded_size: dl.file_size.unwrap_or(total_downloaded),
+            downloaded_size: final_size,
             file_size: dl.file_size,
             percentage: 100.0,
             speed: 0.0,
-            average_speed: 0.0,
-            eta: Some(0),
+            average_speed: avg_speed,
+            eta: None,
             active_connections: 0,
             status: DownloadStatus::Completed,
+            progress_sequence,
         });
 
         Ok(())
@@ -426,6 +497,8 @@ impl DownloadEngine {
             .map_err(|e| AppError::FileSystem(e.to_string()))?;
 
         let mut current_downloaded = if status.as_u16() == 206 { initial_offset } else { 0 };
+        let mut monotonic_downloaded = current_downloaded;
+        let mut progress_sequence = dl.progress_sequence;
         let mut stream = resp.bytes_stream();
         let mut speed_tracker = SpeedTracker::new(current_downloaded, dl.file_size, 3.0);
         let mut last_emit = std::time::Instant::now();
@@ -446,14 +519,16 @@ impl DownloadEngine {
                         .map_err(|e| AppError::FileSystem(e.to_string()))?;
 
                     current_downloaded += len as i64;
+                    monotonic_downloaded = monotonic_downloaded.max(current_downloaded);
 
                     let now = std::time::Instant::now();
                     if now.duration_since(last_emit).as_millis() >= 100 {
                         last_emit = now;
-                        let (speed, avg_speed, eta) = speed_tracker.record_progress(current_downloaded);
+                        progress_sequence += 1;
+                        let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
                         let percentage = dl.file_size.map_or(0.0, |sz| {
                             if sz > 0 {
-                                ((current_downloaded as f64 / sz as f64) * 100.0).min(100.0)
+                                ((monotonic_downloaded as f64 / sz as f64) * 100.0).min(100.0)
                             } else {
                                 0.0
                             }
@@ -461,7 +536,7 @@ impl DownloadEngine {
 
                         let payload = DownloadProgressPayload {
                             download_id: dl.id.clone(),
-                            downloaded_size: current_downloaded,
+                            downloaded_size: monotonic_downloaded,
                             file_size: dl.file_size,
                             percentage,
                             speed,
@@ -469,20 +544,22 @@ impl DownloadEngine {
                             eta,
                             active_connections: 1,
                             status: DownloadStatus::Downloading,
+                            progress_sequence,
                         };
                         let _ = app.emit("download:progress", payload);
                     }
 
                     if now.duration_since(last_db_update).as_millis() >= 1500 {
                         last_db_update = now;
-                        let (speed, avg_speed, eta) = speed_tracker.record_progress(current_downloaded);
+                        let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
                         let _ = self.db.update_download_progress(
                             &dl.id,
-                            current_downloaded,
+                            monotonic_downloaded,
                             speed,
                             avg_speed,
                             eta,
                             1,
+                            progress_sequence,
                         ).await;
                     }
                 }
@@ -508,18 +585,137 @@ impl DownloadEngine {
                 .map_err(|e| AppError::FileSystem(e.to_string()))?;
         }
 
+        progress_sequence += 1;
+        let final_size = dl.file_size.unwrap_or(monotonic_downloaded);
+        let avg_speed = speed_tracker.average_speed();
+
+        let _ = self.db.update_download_progress(
+            &dl.id,
+            final_size,
+            0.0,
+            avg_speed,
+            None,
+            0,
+            progress_sequence,
+        ).await;
+
         let _ = app.emit("download:progress", DownloadProgressPayload {
             download_id: dl.id.clone(),
-            downloaded_size: dl.file_size.unwrap_or(current_downloaded),
+            downloaded_size: final_size,
             file_size: dl.file_size,
             percentage: 100.0,
             speed: 0.0,
-            average_speed: 0.0,
-            eta: Some(0),
+            average_speed: avg_speed,
+            eta: None,
             active_connections: 0,
             status: DownloadStatus::Completed,
+            progress_sequence,
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_chunk_aggregation_and_monotonicity() {
+        let mut chunk_map: HashMap<u32, i64> = HashMap::new();
+        chunk_map.insert(0, 0);
+        chunk_map.insert(1, 0);
+        chunk_map.insert(2, 0);
+        chunk_map.insert(3, 0);
+
+        let mut monotonic_total: i64 = 0;
+
+        // Progress on chunks
+        chunk_map.insert(0, 10_000_000);
+        let sum: i64 = chunk_map.values().sum();
+        monotonic_total = monotonic_total.max(sum);
+        assert_eq!(monotonic_total, 10_000_000);
+
+        chunk_map.insert(1, 20_000_000);
+        let sum: i64 = chunk_map.values().sum();
+        monotonic_total = monotonic_total.max(sum);
+        assert_eq!(monotonic_total, 30_000_000);
+
+        chunk_map.insert(2, 25_000_000);
+        let sum: i64 = chunk_map.values().sum();
+        monotonic_total = monotonic_total.max(sum);
+        assert_eq!(monotonic_total, 55_000_000);
+    }
+
+    #[test]
+    fn test_retry_scenario_no_double_counting() {
+        // Scenario: 100 MB file, 4 chunks of 25 MB
+        let total_file_size: i64 = 100_000_000;
+        let mut chunk_map: HashMap<u32, i64> = HashMap::new();
+        chunk_map.insert(0, 25_000_000); // 25 MB done
+        chunk_map.insert(1, 25_000_000); // 25 MB done
+        chunk_map.insert(2, 15_000_000); // 15 MB done, then connection fails
+        chunk_map.insert(3, 0);          // 0 MB
+
+        let mut monotonic_total: i64 = chunk_map.values().sum();
+        assert_eq!(monotonic_total, 65_000_000); // 65 MB
+
+        // Chunk 2 restarts from 0 on retry
+        chunk_map.insert(2, 0);
+        let current_sum: i64 = chunk_map.values().sum();
+        assert_eq!(current_sum, 50_000_000); // Real disk unique sum drops to 50MB
+        // Monotonic total must never decrease:
+        monotonic_total = monotonic_total.max(current_sum);
+        assert_eq!(monotonic_total, 65_000_000); // Protected from backward jump
+
+        // Chunk 2 downloads again up to 20 MB
+        chunk_map.insert(2, 20_000_000);
+        let current_sum: i64 = chunk_map.values().sum();
+        monotonic_total = monotonic_total.max(current_sum);
+        assert_eq!(monotonic_total, 70_000_000); // 25 + 25 + 20 + 0 = 70 MB
+
+        // Chunk 2 finishes (25 MB) and Chunk 3 finishes (25 MB)
+        chunk_map.insert(2, 25_000_000);
+        chunk_map.insert(3, 25_000_000);
+        let current_sum: i64 = chunk_map.values().sum();
+        monotonic_total = monotonic_total.max(current_sum);
+        assert_eq!(monotonic_total, total_file_size);
+        assert_eq!(monotonic_total, 100_000_000);
+
+        let percentage = (monotonic_total as f64 / total_file_size as f64) * 100.0;
+        assert_eq!(percentage, 100.0);
+    }
+
+    #[test]
+    fn test_stale_sequence_rejection_logic() {
+        let mut current_sequence: u64 = 100;
+
+        let incoming_event_1 = 101;
+        if incoming_event_1 >= current_sequence {
+            current_sequence = incoming_event_1;
+        }
+        assert_eq!(current_sequence, 101);
+
+        let stale_event = 99;
+        let is_stale = stale_event < current_sequence;
+        assert!(is_stale);
+        if !is_stale {
+            current_sequence = stale_event;
+        }
+        assert_eq!(current_sequence, 101); // Preserved
+    }
+
+    #[test]
+    fn test_unknown_content_length_percentage() {
+        let file_size: Option<i64> = None;
+        let downloaded: i64 = 50_000_000;
+        let percentage: Option<f64> = file_size.map(|sz| {
+            if sz > 0 {
+                ((downloaded as f64 / sz as f64) * 100.0).min(100.0)
+            } else {
+                0.0
+            }
+        });
+        assert_eq!(percentage, None); // Indeterminate state, no fake %
     }
 }

@@ -44,9 +44,10 @@ pub fn partition_chunks(download_id: &str, file_size: i64, num_connections: u32)
     chunks
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ChunkProgressMsg {
     BytesRead { chunk_index: u32, bytes: usize },
+    ChunkProgress { chunk_index: u32, downloaded_bytes: i64 },
     ChunkCompleted { chunk_index: u32 },
     ChunkFailed { chunk_index: u32, error: String },
 }
@@ -62,7 +63,8 @@ pub async fn download_chunk_worker(
     limiter: RateLimiter,
 ) -> AppResult<()> {
     let chunk_index = chunk.chunk_index;
-    let current_start = chunk.start_byte + chunk.downloaded_bytes;
+    let mut current_downloaded = chunk.downloaded_bytes;
+    let current_start = chunk.start_byte + current_downloaded;
     let end_byte = chunk.end_byte;
 
     if current_start > end_byte {
@@ -135,8 +137,13 @@ pub async fn download_chunk_worker(
                     .await
                     .map_err(|e| AppError::FileSystem(e.to_string()))?;
 
+                current_downloaded += len as i64;
+
                 let _ = progress_tx
-                    .send(ChunkProgressMsg::BytesRead { chunk_index, bytes: len })
+                    .send(ChunkProgressMsg::ChunkProgress {
+                        chunk_index,
+                        downloaded_bytes: current_downloaded,
+                    })
                     .await;
             }
             Err(e) => {
