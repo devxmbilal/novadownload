@@ -3,6 +3,7 @@ pub mod commands;
 pub mod database;
 pub mod downloader;
 pub mod errors;
+pub mod extractor;
 pub mod ffmpeg;
 pub mod filesystem;
 pub mod models;
@@ -84,6 +85,7 @@ pub fn run() {
             let scheduler = SchedulerService::new(db.clone(), engine.clone());
             let ffmpeg = FFmpegService::default();
             let notifications = NotificationService::new();
+            let extractor = extractor::ExtractorService::default();
 
             // Start queue worker & scheduler
             queue_mgr.start_queue_worker(app_handle.clone());
@@ -108,6 +110,7 @@ pub fn run() {
                 settings_mgr,
                 ffmpeg,
                 notifications,
+                extractor,
             };
 
             app.manage(state);
@@ -203,6 +206,10 @@ pub fn run() {
             commands::show_in_folder,
             commands::get_system_stats,
             commands::recover_downloads,
+            commands::check_is_media_url,
+            commands::get_extractor_status,
+            commands::extract_media_info,
+            commands::create_media_download,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NovaDownload application");

@@ -1,5 +1,6 @@
 use crate::database::Database;
 use crate::downloader::DownloadEngine;
+use crate::extractor::ExtractorService;
 use crate::ffmpeg::FFmpegService;
 use crate::notifications::NotificationService;
 use crate::queue::QueueManager;
@@ -15,4 +16,5 @@ pub struct AppState {
     pub settings_mgr: SettingsManager,
     pub ffmpeg: FFmpegService,
     pub notifications: NotificationService,
+    pub extractor: ExtractorService,
 }

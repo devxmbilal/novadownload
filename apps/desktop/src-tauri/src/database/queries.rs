@@ -247,6 +247,26 @@ impl Database {
         Ok(())
     }
 
+    pub async fn update_download_file_size(&self, id: &str, file_size: i64) -> AppResult<()> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE downloads SET file_size = ?, updated_at = ? WHERE id = ?",
+            params![file_size, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub async fn update_download_file_path(&self, id: &str, file_name: &str, file_path: &str) -> AppResult<()> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE downloads SET file_name = ?, file_path = ?, updated_at = ? WHERE id = ?",
+            params![file_name, file_path, now, id],
+        )?;
+        Ok(())
+    }
+
     pub async fn delete_download(&self, id: &str) -> AppResult<()> {
         let conn = self.conn.lock().await;
         conn.execute("DELETE FROM downloads WHERE id = ?", params![id])?;

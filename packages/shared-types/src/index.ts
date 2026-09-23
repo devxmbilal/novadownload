@@ -158,3 +158,45 @@ export interface SystemStats {
   current_download_speed: number;
   total_bytes_downloaded: number;
 }
+
+export interface MediaFormat {
+  format_id: string;
+  format_note: string | null;
+  ext: string;
+  resolution: string | null;
+  filesize: number | null;
+  filesize_approx: number | null;
+  tbr: number | null;
+  fps: number | null;
+  vcodec: string | null;
+  acodec: string | null;
+  has_video: boolean;
+  has_audio: boolean;
+}
+
+export interface MediaInfo {
+  id: string;
+  title: string;
+  url: string;
+  thumbnail: string | null;
+  duration: number | null;
+  uploader: string | null;
+  extractor: string;
+  formats: MediaFormat[];
+}
+
+export interface MediaDownloadRequest {
+  url: string;
+  format_id: string;
+  is_audio_only: boolean;
+  directory?: string;
+  file_name?: string;
+  quality_label?: string;
+}
+
+export interface ExtractorStatus {
+  is_available: boolean;
+  binary_path: string | null;
+  version: string | null;
+}
+

@@ -6,8 +6,17 @@ use tauri::State;
 pub async fn open_file_or_dir(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        let win_path = path.replace('/', "\\");
+        let p = std::path::Path::new(&win_path);
+        let target = if p.exists() {
+            &win_path
+        } else if let Some(parent) = p.parent() {
+            &parent.to_string_lossy().replace('/', "\\")
+        } else {
+            &win_path
+        };
         std::process::Command::new("explorer")
-            .arg(&path)
+            .arg(target)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -32,14 +41,29 @@ pub async fn open_file_or_dir(path: String) -> Result<(), String> {
 pub async fn show_in_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path))
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let win_path = path.replace('/', "\\");
+        let p = std::path::Path::new(&win_path);
+        if p.exists() {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", win_path))
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else if let Some(parent) = p.parent() {
+            let parent_win = parent.to_string_lossy().replace('/', "\\");
+            std::process::Command::new("explorer")
+                .arg(&parent_win)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new("explorer")
+                .arg(&win_path)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
-        if let Some(parent) = Path::new(&path).parent() {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
             let parent_str = parent.to_string_lossy().to_string();
             open_file_or_dir(parent_str).await?;
         }

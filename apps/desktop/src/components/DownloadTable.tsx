@@ -166,9 +166,13 @@ export const DownloadTable: React.FC = () => {
             ) : (
               filteredDownloads.map((dl) => {
                 const isSelected = selectedId === dl.id;
-                const percentage = dl.file_size
-                  ? Math.min(100, Math.round((dl.downloaded_size / dl.file_size) * 100))
-                  : 0;
+                const percentage = dl.status === 'completed'
+                  ? 100
+                  : (dl.file_size && dl.file_size > 0
+                      ? Math.min(100, Math.round((dl.downloaded_size / dl.file_size) * 100))
+                      : (dl.downloaded_size > 0 ? 50 : 0));
+
+                const displaySize = dl.file_size || (dl.status === 'completed' ? dl.downloaded_size : null);
 
                 return (
                   <tr
@@ -222,7 +226,7 @@ export const DownloadTable: React.FC = () => {
 
                     {/* Size */}
                     <td className="py-2.5 px-2 text-muted-foreground whitespace-nowrap font-mono">
-                      {formatBytes(dl.file_size)}
+                      {formatBytes(displaySize)}
                     </td>
 
                     {/* Downloaded */}

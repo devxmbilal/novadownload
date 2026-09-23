@@ -225,3 +225,308 @@ pub async fn resume_all_downloads(
     }
     Ok(())
 }
+
+// --- Extractor & Media Commands ---
+
+#[tauri::command]
+pub fn check_is_media_url(url: String) -> bool {
+    crate::extractor::ExtractorService::is_media_url(&url)
+}
+
+#[tauri::command]
+pub async fn get_extractor_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::extractor::ExtractorStatus, String> {
+    Ok(state.extractor.get_status(&app).await)
+}
+
+#[tauri::command]
+pub async fn extract_media_info(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<crate::extractor::MediaInfo, String> {
+    state
+        .extractor
+        .extract_info(&app, &url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_media_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::extractor::MediaDownloadRequest,
+) -> Result<Download, String> {
+    use std::process::Stdio;
+    use tauri::Emitter;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let settings = state.settings_mgr.get_settings().await;
+    let base_dir = request
+        .directory
+        .unwrap_or_else(|| settings.default_download_directory.clone());
+    
+    let target_dir = if settings.auto_categorize {
+        let cat = if request.is_audio_only { "Music" } else { "Videos" };
+        if let Some(sub) = settings.category_folders.get(cat) {
+            PathBuf::from(&base_dir).join(sub)
+        } else {
+            PathBuf::from(&base_dir)
+        }
+    } else {
+        PathBuf::from(&base_dir)
+    };
+
+    let _ = tokio::fs::create_dir_all(&target_dir).await;
+
+    let ext = if request.is_audio_only { "mp3" } else { "mp4" };
+    let raw_title = request.file_name.unwrap_or_else(|| "media_download".to_string());
+    let clean_title = sanitize_filename(&raw_title);
+    let filename = if clean_title.ends_with(&format!(".{}", ext)) {
+        clean_title
+    } else {
+        format!("{}.{}", clean_title, ext)
+    };
+
+    let final_filepath = get_unique_filepath(&target_dir, &filename);
+    let dl_id = Uuid::new_v4().to_string();
+    let now = Utc::now();
+
+    let download = Download {
+        id: dl_id.clone(),
+        url: request.url.clone(),
+        original_url: request.url.clone(),
+        file_name: final_filepath.file_name().unwrap_or_default().to_string_lossy().to_string(),
+        file_path: final_filepath.to_string_lossy().to_string(),
+        directory: target_dir.to_string_lossy().to_string(),
+        mime_type: Some(if request.is_audio_only { "audio/mp3".to_string() } else { "video/mp4".to_string() }),
+        file_size: None,
+        downloaded_size: 0,
+        status: DownloadStatus::Downloading,
+        download_type: "media".to_string(),
+        total_connections: 1,
+        active_connections: 1,
+        speed: 0.0,
+        average_speed: 0.0,
+        eta: None,
+        error_message: None,
+        created_at: now,
+        started_at: Some(now),
+        completed_at: None,
+        updated_at: now,
+    };
+
+    state.db.insert_download(&download).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("download:created", download.clone());
+
+    // Spawn async background worker using yt-dlp
+    let bin_path = state.extractor.ensure_binary(&app).await.map_err(|e| e.to_string())?;
+    let app_handle = app.clone();
+    let db = state.db.clone();
+    let url = request.url.clone();
+    let format_id = request.format_id.clone();
+    let is_audio = request.is_audio_only;
+    let out_template = final_filepath.to_string_lossy().to_string();
+
+    tauri::async_runtime::spawn(async move {
+        let mut cmd = tokio::process::Command::new(&bin_path);
+        cmd.arg("--no-playlist");
+        cmd.arg("--newline");
+        cmd.arg("--no-colors");
+
+        if is_audio {
+            cmd.args(&["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "0"]);
+        } else if format_id == "best" {
+            cmd.args(&["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4"]);
+        } else {
+            cmd.args(&["-f", &format!("{}+bestaudio/best", format_id), "--merge-output-format", "mp4"]);
+        }
+
+        cmd.args(&["-o", &out_template, &url]);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        let mut last_file_size: i64 = 0;
+
+        if let Ok(mut child) = cmd.spawn() {
+            if let Some(stdout) = child.stdout.take() {
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    if let Some((pct, total_bytes, speed, eta)) = parse_ytdlp_line(&line) {
+                        if total_bytes > 0 {
+                            last_file_size = total_bytes;
+                        }
+                        let downloaded = if total_bytes > 0 {
+                            ((pct / 100.0) * (total_bytes as f64)) as i64
+                        } else {
+                            0
+                        };
+
+                        let _ = app_handle.emit("download:progress", serde_json::json!({
+                            "download_id": dl_id,
+                            "downloaded_size": downloaded,
+                            "file_size": if total_bytes > 0 { Some(total_bytes) } else { None },
+                            "percentage": pct,
+                            "speed": speed,
+                            "average_speed": speed,
+                            "eta": if eta > 0 { Some(eta) } else { None },
+                            "active_connections": 1,
+                            "status": "downloading"
+                        }));
+                    }
+                }
+            }
+
+            let status = child.wait().await;
+            if let Ok(exit_status) = status {
+                if exit_status.success() {
+                    // Locate actual file created on disk
+                    let mut actual_path = PathBuf::from(&out_template);
+                    if !actual_path.exists() {
+                        let candidate_mp3 = PathBuf::from(format!("{}.mp3", out_template));
+                        let candidate_mp4 = PathBuf::from(format!("{}.mp4", out_template));
+                        if candidate_mp3.exists() {
+                            actual_path = candidate_mp3;
+                        } else if candidate_mp4.exists() {
+                            actual_path = candidate_mp4;
+                        }
+                    }
+
+                    let file_size = tokio::fs::metadata(&actual_path)
+                        .await
+                        .map(|m| m.len() as i64)
+                        .ok()
+                        .unwrap_or(last_file_size);
+
+                    let actual_filename = actual_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let actual_filepath_str = actual_path.to_string_lossy().to_string();
+
+                    let _ = db.update_download_file_path(&dl_id, &actual_filename, &actual_filepath_str).await;
+                    let _ = db.update_download_file_size(&dl_id, file_size).await;
+                    let _ = db.update_download_progress(&dl_id, file_size, 0.0, 0.0, None, 0).await;
+                    let _ = db.update_download_status(&dl_id, DownloadStatus::Completed, None).await;
+
+                    let _ = app_handle.emit("download:progress", serde_json::json!({
+                        "download_id": dl_id,
+                        "downloaded_size": file_size,
+                        "file_size": file_size,
+                        "percentage": 100.0,
+                        "speed": 0.0,
+                        "average_speed": 0.0,
+                        "eta": 0,
+                        "active_connections": 0,
+                        "status": "completed"
+                    }));
+
+                    let _ = app_handle.emit("download:status_changed", serde_json::json!({
+                        "download_id": dl_id,
+                        "status": "completed"
+                    }));
+                } else {
+                    let _ = db.update_download_status(&dl_id, DownloadStatus::Failed, Some("Extraction process failed")).await;
+                    let _ = app_handle.emit("download:status_changed", serde_json::json!({
+                        "download_id": dl_id,
+                        "status": "failed",
+                        "error": "Extraction failed"
+                    }));
+                }
+            }
+        }
+    });
+
+    Ok(download)
+}
+
+fn parse_ytdlp_line(line: &str) -> Option<(f64, i64, f64, i64)> {
+    if !line.contains("[download]") || !line.contains('%') {
+        return None;
+    }
+
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    let mut percentage: f64 = 0.0;
+    let mut total_bytes: i64 = 0;
+    let mut speed_bytes_per_sec: f64 = 0.0;
+    let mut eta_secs: i64 = 0;
+
+    for (i, &p) in parts.iter().enumerate() {
+        if p.ends_with('%') {
+            if let Ok(pct) = p.trim_end_matches('%').parse::<f64>() {
+                percentage = pct;
+            }
+        } else if p == "of" && i + 1 < parts.len() {
+            let size_str = parts[i + 1].trim_start_matches('~');
+            total_bytes = parse_size_str(size_str);
+        } else if p == "at" && i + 1 < parts.len() {
+            speed_bytes_per_sec = parse_speed_str(parts[i + 1]);
+        } else if p == "ETA" && i + 1 < parts.len() {
+            eta_secs = parse_eta_str(parts[i + 1]);
+        }
+    }
+
+    if percentage > 0.0 {
+        Some((percentage, total_bytes, speed_bytes_per_sec, eta_secs))
+    } else {
+        None
+    }
+}
+
+fn parse_size_str(s: &str) -> i64 {
+    let s = s.trim();
+    if s.ends_with("GiB") || s.ends_with("GB") {
+        let num = s.trim_end_matches("GiB").trim_end_matches("GB").parse::<f64>().unwrap_or(0.0);
+        (num * 1024.0 * 1024.0 * 1024.0) as i64
+    } else if s.ends_with("MiB") || s.ends_with("MB") {
+        let num = s.trim_end_matches("MiB").trim_end_matches("MB").parse::<f64>().unwrap_or(0.0);
+        (num * 1024.0 * 1024.0) as i64
+    } else if s.ends_with("KiB") || s.ends_with("KB") {
+        let num = s.trim_end_matches("KiB").trim_end_matches("KB").parse::<f64>().unwrap_or(0.0);
+        (num * 1024.0) as i64
+    } else if s.ends_with('B') {
+        s.trim_end_matches('B').parse::<i64>().unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+fn parse_speed_str(s: &str) -> f64 {
+    let s = s.trim();
+    if s.ends_with("GiB/s") || s.ends_with("GB/s") {
+        let num = s.trim_end_matches("GiB/s").trim_end_matches("GB/s").parse::<f64>().unwrap_or(0.0);
+        num * 1024.0 * 1024.0 * 1024.0
+    } else if s.ends_with("MiB/s") || s.ends_with("MB/s") {
+        let num = s.trim_end_matches("MiB/s").trim_end_matches("MB/s").parse::<f64>().unwrap_or(0.0);
+        num * 1024.0 * 1024.0
+    } else if s.ends_with("KiB/s") || s.ends_with("KB/s") {
+        let num = s.trim_end_matches("KiB/s").trim_end_matches("KB/s").parse::<f64>().unwrap_or(0.0);
+        num * 1024.0
+    } else if s.ends_with("B/s") {
+        s.trim_end_matches("B/s").parse::<f64>().unwrap_or(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn parse_eta_str(s: &str) -> i64 {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 2 {
+        let m = parts[0].parse::<i64>().unwrap_or(0);
+        let sec = parts[1].parse::<i64>().unwrap_or(0);
+        m * 60 + sec
+    } else if parts.len() == 3 {
+        let h = parts[0].parse::<i64>().unwrap_or(0);
+        let m = parts[1].parse::<i64>().unwrap_or(0);
+        let sec = parts[2].parse::<i64>().unwrap_or(0);
+        h * 3600 + m * 60 + sec
+    } else {
+        0
+    }
+}
+
+

@@ -25,9 +25,13 @@ export const DownloadDetailPanel: React.FC = () => {
     return null;
   }
 
-  const percentage = selectedDownload.file_size
-    ? Math.min(100, Math.round((selectedDownload.downloaded_size / selectedDownload.file_size) * 100))
-    : 0;
+  const percentage = selectedDownload.status === 'completed'
+    ? 100
+    : (selectedDownload.file_size && selectedDownload.file_size > 0
+        ? Math.min(100, Math.round((selectedDownload.downloaded_size / selectedDownload.file_size) * 100))
+        : (selectedDownload.downloaded_size > 0 ? 50 : 0));
+
+  const displayTotalSize = selectedDownload.file_size || (selectedDownload.status === 'completed' ? selectedDownload.downloaded_size : null);
 
   const maxSpeed = Math.max(...speedHistory.map((s) => s.speed), 1024 * 100);
 
@@ -136,7 +140,7 @@ export const DownloadDetailPanel: React.FC = () => {
             <div className="p-2 rounded-lg bg-background/50 border border-border/40 space-y-0.5">
               <span className="text-muted-foreground">Total Size</span>
               <div className="font-mono font-semibold text-foreground">
-                {formatBytes(selectedDownload.file_size)}
+                {formatBytes(displayTotalSize)}
               </div>
             </div>
             <div className="p-2 rounded-lg bg-background/50 border border-border/40 space-y-0.5">
