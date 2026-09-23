@@ -138,6 +138,8 @@ export const DownloadGridView: React.FC = () => {
           const percentage =
             dl.status === 'completed'
               ? 100
+              : typeof dl.percentage === 'number' && dl.percentage > 0
+              ? Math.min(100, Math.round(dl.percentage))
               : dl.file_size && dl.file_size > 0
               ? Math.min(100, Math.round((dl.downloaded_size / dl.file_size) * 100))
               : dl.downloaded_size > 0

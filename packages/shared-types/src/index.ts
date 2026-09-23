@@ -38,6 +38,7 @@ export interface Download {
   eta: number | null;
   error_message: string | null;
   thumbnail?: string | null;
+  percentage?: number;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;

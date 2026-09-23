@@ -168,9 +168,11 @@ export const DownloadTable: React.FC = () => {
                 const isSelected = selectedId === dl.id;
                 const percentage = dl.status === 'completed'
                   ? 100
-                  : (dl.file_size && dl.file_size > 0
-                      ? Math.min(100, Math.round((dl.downloaded_size / dl.file_size) * 100))
-                      : (dl.downloaded_size > 0 ? 50 : 0));
+                  : (typeof dl.percentage === 'number' && dl.percentage > 0
+                      ? Math.min(100, Math.round(dl.percentage))
+                      : (dl.file_size && dl.file_size > 0
+                          ? Math.min(100, Math.round((dl.downloaded_size / dl.file_size) * 100))
+                          : (dl.downloaded_size > 0 ? 50 : 0)));
 
                 const displaySize = dl.file_size || (dl.status === 'completed' ? dl.downloaded_size : null);
 

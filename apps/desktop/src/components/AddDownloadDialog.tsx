@@ -349,14 +349,42 @@ export const AddDownloadDialog: React.FC = () => {
                       className="w-full px-2.5 py-1.5 rounded-md bg-secondary/80 border border-border focus:border-primary outline-none transition text-xs text-foreground cursor-pointer"
                     >
                       <option value="best">Best Quality Available (Auto Mux)</option>
-                      {mediaInfo.formats
-                        .filter((f) => f.has_video && f.resolution)
-                        .filter((f, idx, arr) => arr.findIndex((x) => x.resolution === f.resolution) === idx)
-                        .map((f) => (
-                          <option key={f.format_id} value={f.format_id}>
-                            {f.resolution} {f.fps ? `@ ${f.fps}fps` : ''} ({f.ext})
-                          </option>
-                        ))}
+                      {(() => {
+                        const getNumericHeight = (f: MediaFormat): number => {
+                          if (!f.resolution) return 0;
+                          if (f.resolution.includes('x')) {
+                            const parts = f.resolution.split('x');
+                            return parseInt(parts[1], 10) || 0;
+                          }
+                          return parseInt(f.resolution.replace(/[^0-9]/g, ''), 10) || 0;
+                        };
+
+                        const formatQualityLabel = (f: MediaFormat): string => {
+                          let heightStr = f.resolution || '';
+                          if (heightStr.includes('x')) {
+                            const parts = heightStr.split('x');
+                            heightStr = parts[1] || parts[0];
+                          }
+                          const cleanHeight = heightStr.replace(/[^0-9]/g, '');
+                          const resLabel = cleanHeight ? `${cleanHeight}p` : f.resolution || 'Video';
+                          const fpsLabel = f.fps ? ` @ ${Math.round(f.fps)}fps` : '';
+                          const extLabel = f.ext ? ` (${f.ext})` : '';
+                          return `${resLabel}${fpsLabel}${extLabel}`;
+                        };
+
+                        return mediaInfo.formats
+                          .filter((f) => f.has_video && f.resolution)
+                          .sort((a, b) => getNumericHeight(b) - getNumericHeight(a))
+                          .filter((f, idx, arr) => {
+                            const h = getNumericHeight(f);
+                            return arr.findIndex((x) => getNumericHeight(x) === h) === idx;
+                          })
+                          .map((f) => (
+                            <option key={f.format_id} value={f.format_id}>
+                              {formatQualityLabel(f)}
+                            </option>
+                          ));
+                      })()}
                     </select>
                   </div>
                 )}

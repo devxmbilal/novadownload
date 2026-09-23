@@ -149,6 +149,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   initEventListeners: () => {
     let unlistenProgress: (() => void) | null = null;
     let unlistenStatus: (() => void) | null = null;
+    let unlistenCreated: (() => void) | null = null;
 
     listen<DownloadProgressPayload>('download:progress', (event) => {
       const payload = event.payload;
@@ -161,6 +162,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               ...d,
               downloaded_size: payload.downloaded_size,
               file_size: payload.file_size ?? d.file_size,
+              percentage: payload.percentage,
               speed: payload.speed,
               average_speed: payload.average_speed,
               eta: payload.eta,
@@ -186,9 +188,19 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       unlistenProgress = unlisten;
     });
 
+    listen<Download>('download:created', (event) => {
+      const newDl = event.payload;
+      if (!newDl || !newDl.id) return;
+      set((state) => ({
+        downloads: [newDl, ...state.downloads.filter((d) => d.id !== newDl.id)],
+      }));
+    }).then((unlisten) => {
+      unlistenCreated = unlisten;
+    });
+
     listen<{ download_id: string; status: string; error?: string }>(
       'download:status_changed',
-      (event) => {
+      async (event) => {
         const { download_id, status, error } = event.payload;
         set((state) => ({
           downloads: state.downloads.map((d) => {
@@ -199,11 +211,29 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
                 error_message: error || null,
                 speed: status === 'completed' || status === 'paused' || status === 'failed' ? 0 : d.speed,
                 eta: status === 'completed' ? 0 : d.eta,
+                percentage: status === 'completed' ? 100 : d.percentage,
               };
             }
             return d;
           }),
         }));
+
+        if (status === 'completed') {
+          // Fetch updated download to get exact file size and final file path
+          try {
+            const updated = await invoke<Download | null>('get_download', { downloadId: download_id });
+            if (updated) {
+              set((state) => ({
+                downloads: state.downloads.map((d) => (d.id === download_id ? { ...updated, percentage: 100 } : d)),
+              }));
+              // Trigger Complete Modal
+              const { useUIStore } = await import('./uiStore');
+              useUIStore.getState().openCompleteModal({ ...updated, percentage: 100 });
+            }
+          } catch (e) {
+            console.error('Failed to fetch completed download info:', e);
+          }
+        }
       }
     ).then((unlisten) => {
       unlistenStatus = unlisten;
@@ -212,6 +242,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     return () => {
       if (unlistenProgress) unlistenProgress();
       if (unlistenStatus) unlistenStatus();
+      if (unlistenCreated) unlistenCreated();
     };
   },
 }));

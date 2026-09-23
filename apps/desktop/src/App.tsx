@@ -6,6 +6,7 @@ import { DownloadGridView } from './components/DownloadGridView';
 import { DownloadDetailPanel } from './components/DownloadDetailPanel';
 import { AddDownloadDialog } from './components/AddDownloadDialog';
 import { SettingsDialog } from './components/SettingsDialog';
+import { DownloadCompleteModal } from './components/DownloadCompleteModal';
 import { ContextMenu } from './components/ContextMenu';
 import { DashboardView } from './components/DashboardView';
 import { useDownloadStore } from './stores/downloadStore';
@@ -121,6 +122,7 @@ export function App() {
       {/* Modals & Menus */}
       <AddDownloadDialog />
       <SettingsDialog />
+      <DownloadCompleteModal />
       <ContextMenu />
     </div>
   );

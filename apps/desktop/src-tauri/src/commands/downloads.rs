@@ -361,8 +361,9 @@ pub async fn create_media_download(
                         if total_bytes > 0 {
                             last_file_size = total_bytes;
                         }
-                        let downloaded = if total_bytes > 0 {
-                            ((pct / 100.0) * (total_bytes as f64)) as i64
+                        let effective_total = if total_bytes > 0 { total_bytes } else { last_file_size };
+                        let downloaded = if effective_total > 0 {
+                            ((pct / 100.0) * (effective_total as f64)) as i64
                         } else {
                             0
                         };
@@ -370,7 +371,7 @@ pub async fn create_media_download(
                         let _ = app_handle.emit("download:progress", serde_json::json!({
                             "download_id": dl_id,
                             "downloaded_size": downloaded,
-                            "file_size": if total_bytes > 0 { Some(total_bytes) } else { None },
+                            "file_size": if effective_total > 0 { Some(effective_total) } else { None },
                             "percentage": pct,
                             "speed": speed,
                             "average_speed": speed,
@@ -463,16 +464,28 @@ fn parse_ytdlp_line(line: &str) -> Option<(f64, i64, f64, i64)> {
                 percentage = pct;
             }
         } else if p == "of" && i + 1 < parts.len() {
-            let size_str = parts[i + 1].trim_start_matches('~');
-            total_bytes = parse_size_str(size_str);
+            let mut idx = i + 1;
+            while idx < parts.len() && (parts[idx] == "~" || parts[idx].is_empty()) {
+                idx += 1;
+            }
+            if idx < parts.len() {
+                let size_str = parts[idx].trim_start_matches('~');
+                total_bytes = parse_size_str(size_str);
+            }
         } else if p == "at" && i + 1 < parts.len() {
-            speed_bytes_per_sec = parse_speed_str(parts[i + 1]);
+            let mut idx = i + 1;
+            while idx < parts.len() && (parts[idx] == "~" || parts[idx].is_empty()) {
+                idx += 1;
+            }
+            if idx < parts.len() {
+                speed_bytes_per_sec = parse_speed_str(parts[idx]);
+            }
         } else if p == "ETA" && i + 1 < parts.len() {
             eta_secs = parse_eta_str(parts[i + 1]);
         }
     }
 
-    if percentage > 0.0 {
+    if percentage >= 0.0 {
         Some((percentage, total_bytes, speed_bytes_per_sec, eta_secs))
     } else {
         None

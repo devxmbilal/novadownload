@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { Download } from '../types';
 
 interface UIState {
   currentView: 'downloads' | 'dashboard' | 'scheduled';
@@ -7,6 +8,7 @@ interface UIState {
   viewMode: 'list' | 'grid';
   isSettingsOpen: boolean;
   isDetailsOpen: boolean;
+  completedDownload: Download | null;
   contextMenu: {
     isOpen: boolean;
     x: number;
@@ -21,6 +23,8 @@ interface UIState {
   openSettings: () => void;
   closeSettings: () => void;
   toggleDetails: () => void;
+  openCompleteModal: (download: Download) => void;
+  closeCompleteModal: () => void;
   openContextMenu: (x: number, y: number, downloadId: string) => void;
   closeContextMenu: () => void;
 }
@@ -32,6 +36,7 @@ export const useUIStore = create<UIState>((set) => ({
   viewMode: 'list',
   isSettingsOpen: false,
   isDetailsOpen: true,
+  completedDownload: null,
   contextMenu: {
     isOpen: false,
     x: 0,
@@ -46,6 +51,8 @@ export const useUIStore = create<UIState>((set) => ({
   openSettings: () => set({ isSettingsOpen: true }),
   closeSettings: () => set({ isSettingsOpen: false }),
   toggleDetails: () => set((state) => ({ isDetailsOpen: !state.isDetailsOpen })),
+  openCompleteModal: (download) => set({ completedDownload: download }),
+  closeCompleteModal: () => set({ completedDownload: null }),
   openContextMenu: (x, y, downloadId) =>
     set({
       contextMenu: {
@@ -65,3 +72,4 @@ export const useUIStore = create<UIState>((set) => ({
       },
     }),
 }));
+
