@@ -123,6 +123,7 @@ impl Database {
                     error_message: row.get(16)?,
                     thumbnail: row.get(17)?,
                     progress_sequence: seq as u64,
+                    file_exists: None,
                     created_at: DateTime::parse_from_rfc3339(&created_str)
                         .map(|t| t.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
@@ -180,6 +181,7 @@ impl Database {
                 error_message: row.get(16)?,
                 thumbnail: row.get(17)?,
                 progress_sequence: seq as u64,
+                file_exists: None,
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .map(|t| t.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),

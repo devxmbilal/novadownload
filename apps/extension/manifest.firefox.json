@@ -15,9 +15,22 @@
   "background": {
     "scripts": ["src/background/index.ts"]
   },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "web_accessible_resources": [
+    "icons/*"
+  ],
   "browser_action": {
     "default_popup": "src/popup/index.html",
-    "default_title": "NovaDownload"
+    "default_title": "NovaDownload",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
   },
   "content_scripts": [
     {

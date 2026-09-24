@@ -126,9 +126,22 @@ pub fn run() {
                 ],
             )?;
 
-            let _tray = TrayIconBuilder::new()
+            // Explicitly set window icon
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(icon) = app.default_window_icon() {
+                    let _ = window.set_icon(icon.clone());
+                }
+            }
+
+            let mut tray_builder = TrayIconBuilder::new()
                 .menu(&tray_menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(false);
+
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+
+            let _tray = tray_builder
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -210,6 +223,7 @@ pub fn run() {
             commands::get_extractor_status,
             commands::extract_media_info,
             commands::create_media_download,
+            commands::delete_missing_downloads,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NovaDownload application");

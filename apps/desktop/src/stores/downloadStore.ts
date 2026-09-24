@@ -29,6 +29,7 @@ interface DownloadState {
   resumeDownload: (id: string) => Promise<void>;
   cancelDownload: (id: string, deleteFiles?: boolean) => Promise<void>;
   deleteDownload: (id: string, deleteFiles?: boolean) => Promise<void>;
+  deleteMissingDownloads: () => Promise<void>;
   pauseAll: () => Promise<void>;
   resumeAll: () => Promise<void>;
   fetchChunks: (downloadId: string) => Promise<void>;
@@ -94,6 +95,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
                 active_connections: 0,
                 thumbnail: existing.thumbnail || fresh.thumbnail,
                 average_speed: existing.average_speed || fresh.average_speed,
+                file_exists: fresh.file_exists,
               };
             }
           }
@@ -156,6 +158,22 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       downloads: state.downloads.filter((d) => d.id !== id),
       selectedId: state.selectedId === id ? null : state.selectedId,
     }));
+  },
+
+  deleteMissingDownloads: async () => {
+    try {
+      await invoke('delete_missing_downloads');
+      set((state) => ({
+        downloads: state.downloads.filter((d) => !(d.status === 'completed' && d.file_exists === false)),
+        selectedId:
+          state.selectedId &&
+          state.downloads.find((d) => d.id === state.selectedId && d.status === 'completed' && d.file_exists === false)
+            ? null
+            : state.selectedId,
+      }));
+    } catch (e) {
+      console.error('Failed to delete missing downloads', e);
+    }
   },
 
   pauseAll: async () => {

@@ -40,6 +40,7 @@ export interface Download {
   thumbnail?: string | null;
   percentage?: number;
   progress_sequence?: number;
+  file_exists?: boolean;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;

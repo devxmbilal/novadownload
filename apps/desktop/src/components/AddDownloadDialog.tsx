@@ -13,8 +13,10 @@ import {
   Music,
   Video,
   PlayCircle,
+  FolderOpen,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useDownloadStore } from '../stores/downloadStore';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -76,7 +78,11 @@ export const AddDownloadDialog: React.FC = () => {
         }
         if (prefilledMediaOptions.title) {
           setFileName(prefilledMediaOptions.title);
+        } else {
+          setFileName('');
         }
+      } else {
+        setFileName('');
       }
 
       if (prefilledUrl) {
@@ -120,12 +126,40 @@ export const AddDownloadDialog: React.FC = () => {
     if (checkIfMediaUrl(trimmed)) {
       setIsMediaUrl(true);
       setProbeResult(null);
+      setMediaInfo(null);
       handleExtractMedia(trimmed);
     } else {
       setIsMediaUrl(false);
       setMediaInfo(null);
+      setProbeResult(null);
       handleProbe(trimmed);
     }
+  };
+
+  const resolveMatchingFormatId = (desired: string | undefined, formats: MediaFormat[]): string => {
+    if (!desired || desired === 'best') return 'best';
+    if (formats.some((f) => f.format_id === desired)) {
+      return desired;
+    }
+    const targetHeight = parseInt(desired.replace(/[^0-9]/g, ''), 10);
+    if (targetHeight > 0) {
+      const getH = (f: MediaFormat) => {
+        if (!f.resolution) return 0;
+        if (f.resolution.includes('x')) {
+          return parseInt(f.resolution.split('x')[1], 10) || 0;
+        }
+        return parseInt(f.resolution.replace(/[^0-9]/g, ''), 10) || 0;
+      };
+
+      const matched = formats
+        .filter((f) => f.has_video && getH(f) === targetHeight)
+        .sort((a, b) => (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0))[0];
+
+      if (matched) {
+        return matched.format_id;
+      }
+    }
+    return desired;
   };
 
   const handleExtractMedia = async (targetUrl: string) => {
@@ -134,10 +168,18 @@ export const AddDownloadDialog: React.FC = () => {
     try {
       const info = await invoke<MediaInfo>('extract_media_info', { url: targetUrl });
       setMediaInfo(info);
-      setFileName((prev) => prev.trim() || info.title);
-      setCategory(isAudioOnly ? 'Music' : 'Videos');
-      if (prefilledMediaOptions?.formatId) {
-        setSelectedFormatId(prefilledMediaOptions.formatId);
+      if (info && info.title) {
+        setFileName(info.title);
+      }
+      if (prefilledMediaOptions?.isAudioOnly || prefilledMediaOptions?.formatId === 'audio') {
+        setIsAudioOnly(true);
+        setCategory('Music');
+      } else {
+        setCategory('Videos');
+        if (prefilledMediaOptions?.formatId) {
+          const matched = resolveMatchingFormatId(prefilledMediaOptions.formatId, info.formats);
+          setSelectedFormatId(matched);
+        }
       }
     } catch (e: any) {
       setProbeError(`Video extraction: ${e?.toString() || 'Could not parse media'}.`);
@@ -252,10 +294,33 @@ export const AddDownloadDialog: React.FC = () => {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
+  const handleBrowseDirectory = async () => {
+    try {
+      const selected = await openDialog({
+        directory: true,
+        multiple: false,
+        defaultPath: directory || undefined,
+      });
+      if (selected && typeof selected === 'string') {
+        setDirectory(selected);
+      }
+    } catch (e) {
+      console.error('Failed to open directory picker', e);
+    }
+  };
+
   if (!isAddDialogOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none">
+    <div
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey && url.trim()) {
+          e.preventDefault();
+          handleSubmit(true);
+        }
+      }}
+      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none"
+    >
       <div className="w-full max-w-xl bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="p-4 border-b border-border flex items-center justify-between bg-card/90">
@@ -543,12 +608,23 @@ export const AddDownloadDialog: React.FC = () => {
           {/* Save Directory */}
           <div className="space-y-1.5">
             <label className="font-medium text-foreground">Save Destination</label>
-            <input
-              type="text"
-              value={directory}
-              onChange={(e) => setDirectory(e.target.value)}
-              className="w-full px-3 py-2 rounded-md bg-secondary/60 border border-border focus:border-primary focus:bg-background outline-none transition text-xs text-foreground font-mono"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={directory}
+                onChange={(e) => setDirectory(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-md bg-secondary/60 border border-border focus:border-primary focus:bg-background outline-none transition text-xs text-foreground font-mono"
+              />
+              <button
+                type="button"
+                onClick={handleBrowseDirectory}
+                className="px-3 py-2 rounded-md bg-secondary hover:bg-secondary/80 font-medium text-foreground transition flex items-center gap-1.5 cursor-pointer text-xs flex-shrink-0"
+                title="Browse save destination folder"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-primary" />
+                <span>Browse...</span>
+              </button>
+            </div>
           </div>
         </div>
 

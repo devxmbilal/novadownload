@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
 
@@ -95,6 +95,13 @@ async fn download_handler(
     }
 
     info!("Received download from browser extension: {}", payload.url);
+
+    // Pop up, unminimize, and bring window to front like IDM
+    if let Some(window) = state.app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 
     // Emit event to desktop UI to open Add Download dialog with URL prefilled
     let _ = state.app_handle.emit("browser:download_received", &payload);

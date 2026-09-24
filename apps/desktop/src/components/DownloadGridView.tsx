@@ -71,7 +71,7 @@ export const DownloadGridView: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: DownloadStatus) => {
+  const getStatusBadge = (status: DownloadStatus, fileExists?: boolean) => {
     switch (status) {
       case 'downloading':
         return (
@@ -81,6 +81,17 @@ export const DownloadGridView: React.FC = () => {
           </span>
         );
       case 'completed':
+        if (fileExists === false) {
+          return (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30 backdrop-blur-sm"
+              title="File does not exist on disk (deleted from folder)"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              Not Exist
+            </span>
+          );
+        }
         return (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">
             Completed
@@ -113,7 +124,11 @@ export const DownloadGridView: React.FC = () => {
     }
   };
 
-  const handleOpenFile = (path: string) => {
+  const handleOpenFile = (path: string, fileExists?: boolean) => {
+    if (fileExists === false) {
+      alert('This file does not exist on disk (it was deleted or moved from the folder).');
+      return;
+    }
     invoke('open_file_or_dir', { path });
   };
 
@@ -153,7 +168,7 @@ export const DownloadGridView: React.FC = () => {
               onClick={() => setSelectedId(dl.id)}
               onDoubleClick={() => {
                 if (dl.status === 'completed') {
-                  handleOpenFile(dl.file_path);
+                  handleOpenFile(dl.file_path, dl.file_exists);
                 }
               }}
               onContextMenu={(e) => {
@@ -181,7 +196,7 @@ export const DownloadGridView: React.FC = () => {
                 )}
 
                 {/* Status Badge overlay */}
-                <div className="absolute top-2 left-2">{getStatusBadge(dl.status)}</div>
+                <div className="absolute top-2 left-2">{getStatusBadge(dl.status, dl.file_exists)}</div>
 
                 {/* Category tag */}
                 <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-semibold text-white/90 uppercase tracking-wider backdrop-blur-sm">

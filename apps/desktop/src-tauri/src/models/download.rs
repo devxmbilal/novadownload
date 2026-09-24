@@ -69,6 +69,8 @@ pub struct Download {
     pub error_message: Option<String>,
     pub thumbnail: Option<String>,
     pub progress_sequence: u64,
+    #[serde(default)]
+    pub file_exists: Option<bool>,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,

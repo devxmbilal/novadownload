@@ -37,6 +37,11 @@ export const ContextMenu: React.FC = () => {
   if (!contextMenu.isOpen || !download) return null;
 
   const handleOpenFile = () => {
+    if (download.file_exists === false) {
+      alert('This file does not exist on disk (it was deleted or moved from the folder).');
+      closeContextMenu();
+      return;
+    }
     invoke('open_file_or_dir', { path: download.file_path });
     closeContextMenu();
   };

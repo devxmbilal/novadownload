@@ -93,6 +93,7 @@ pub async fn create_download(
         error_message: None,
         thumbnail: None,
         progress_sequence: 0,
+        file_exists: None,
         created_at: now,
         started_at: None,
         completed_at: None,
@@ -200,7 +201,27 @@ pub async fn delete_download(
 
 #[tauri::command]
 pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<Download>, String> {
-    state.db.list_downloads().await.map_err(|e| e.to_string())
+    let mut downloads = state.db.list_downloads().await.map_err(|e| e.to_string())?;
+    for dl in &mut downloads {
+        if dl.status == DownloadStatus::Completed {
+            let exists = std::path::Path::new(&dl.file_path).exists();
+            dl.file_exists = Some(exists);
+        }
+    }
+    Ok(downloads)
+}
+
+#[tauri::command]
+pub async fn delete_missing_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+    let downloads = state.db.list_downloads().await.map_err(|e| e.to_string())?;
+    let mut removed_count = 0;
+    for dl in downloads {
+        if dl.status == DownloadStatus::Completed && !std::path::Path::new(&dl.file_path).exists() {
+            let _ = state.db.delete_download(&dl.id).await;
+            removed_count += 1;
+        }
+    }
+    Ok(removed_count)
 }
 
 #[tauri::command]
@@ -346,6 +367,7 @@ pub async fn create_media_download(
         error_message: None,
         thumbnail: request.thumbnail.clone(),
         progress_sequence: 0,
+        file_exists: None,
         created_at: now,
         started_at: Some(now),
         completed_at: None,
@@ -408,6 +430,7 @@ pub async fn spawn_media_download(
     cmd.arg("--no-playlist");
     cmd.arg("--newline");
     cmd.arg("--no-colors");
+    cmd.env("PYTHONIOENCODING", "utf-8");
     cmd.args(&[
         "--progress-template",
         "download:NOVA_PROG:%(info.format_id)s:%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s:%(progress.speed)s:%(progress.eta)s",
@@ -421,6 +444,13 @@ pub async fn spawn_media_download(
         cmd.args(&["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "0"]);
     } else if format_id == "best" {
         cmd.args(&["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4"]);
+    } else if format_id.ends_with('p') {
+        if let Ok(height) = format_id.trim_end_matches('p').parse::<u32>() {
+            let sel = format!("bestvideo[height<={height}]+bestaudio/best[height<={height}]/best");
+            cmd.args(&["-f", &sel, "--merge-output-format", "mp4"]);
+        } else {
+            cmd.args(&["-f", &format!("{}+bestaudio/best", format_id), "--merge-output-format", "mp4"]);
+        }
     } else {
         cmd.args(&["-f", &format!("{}+bestaudio/best", format_id), "--merge-output-format", "mp4"]);
     }
@@ -486,9 +516,11 @@ pub async fn spawn_media_download(
         }
 
         if let Some(stdout) = child.stdout.take() {
-            let mut reader = BufReader::new(stdout).lines();
+            let mut reader = BufReader::new(stdout);
+            let mut line_buf = Vec::new();
             loop {
-                let line_opt = tokio::select! {
+                line_buf.clear();
+                let read_res = tokio::select! {
                     _ = cancel_token.cancelled() => {
                         info!("Media download {} cancelled / paused. Terminating yt-dlp.", dl_id);
                         let _ = child.kill().await;
@@ -496,22 +528,22 @@ pub async fn spawn_media_download(
                         engine.unregister_task(&dl_id).await;
                         return;
                     }
-                    res = reader.next_line() => {
-                        match res {
-                            Ok(Some(line)) => Some(line),
-                            Ok(None) => None,
-                            Err(e) => {
-                                warn!("Error reading stdout from yt-dlp: {}", e);
-                                None
-                            }
-                        }
+                    res = reader.read_until(b'\n', &mut line_buf) => res,
+                };
+
+                match read_res {
+                    Ok(0) => break, // EOF reached
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!("Error reading stdout bytes from yt-dlp: {}", e);
+                        break;
                     }
                 };
 
-                let line = match line_opt {
-                    Some(l) => l,
-                    None => break,
-                };
+                let line = String::from_utf8_lossy(&line_buf).trim().to_string();
+                if line.is_empty() {
+                    continue;
+                }
 
                 if line.contains("NOVA_POST") || line.contains("[Merger]") || line.contains("Merging") || line.contains("[Fixup") || line.contains("[ExtractAudio") {
                     is_postprocessing = true;

@@ -40,6 +40,10 @@ export const DownloadDetailPanel: React.FC = () => {
   };
 
   const handleOpenFile = () => {
+    if (selectedDownload.file_exists === false) {
+      alert('This file does not exist on disk (it was deleted or moved from the folder).');
+      return;
+    }
     invoke('open_file_or_dir', { path: selectedDownload.file_path });
   };
 
@@ -197,10 +201,15 @@ export const DownloadDetailPanel: React.FC = () => {
             {selectedDownload.status === 'completed' && (
               <button
                 onClick={handleOpenFile}
-                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition cursor-pointer"
+                disabled={selectedDownload.file_exists === false}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                  selectedDownload.file_exists === false
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 cursor-not-allowed opacity-80'
+                    : 'bg-primary hover:bg-primary/90 text-primary-foreground'
+                }`}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                <span>Open File</span>
+                <span>{selectedDownload.file_exists === false ? 'Not Exist' : 'Open File'}</span>
               </button>
             )}
           </div>

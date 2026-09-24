@@ -12,7 +12,9 @@ import {
   RotateCcw,
   Copy,
   Check,
+  FolderOpen,
 } from 'lucide-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { AppSettings } from '../types';
@@ -46,6 +48,21 @@ export const SettingsDialog: React.FC = () => {
     if (!formData) return;
     await updateSettings(formData);
     closeSettings();
+  };
+
+  const handleBrowseDefaultDirectory = async () => {
+    try {
+      const selected = await openDialog({
+        directory: true,
+        multiple: false,
+        defaultPath: formData?.default_download_directory || undefined,
+      });
+      if (selected && typeof selected === 'string') {
+        handleChange('default_download_directory', selected);
+      }
+    } catch (e) {
+      console.error('Failed to open directory picker', e);
+    }
   };
 
   const copyToken = () => {
@@ -134,12 +151,23 @@ export const SettingsDialog: React.FC = () => {
               <div className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="font-semibold text-foreground">Default Download Folder</label>
-                  <input
-                    type="text"
-                    value={formData.default_download_directory}
-                    onChange={(e) => handleChange('default_download_directory', e.target.value)}
-                    className="w-full px-3 py-2 rounded-md bg-secondary/60 border border-border focus:border-primary focus:bg-background outline-none transition font-mono text-xs text-foreground"
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={formData.default_download_directory}
+                      onChange={(e) => handleChange('default_download_directory', e.target.value)}
+                      className="flex-1 px-3 py-2 rounded-md bg-secondary/60 border border-border focus:border-primary focus:bg-background outline-none transition font-mono text-xs text-foreground"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleBrowseDefaultDirectory}
+                      className="px-3 py-2 rounded-md bg-secondary hover:bg-secondary/80 font-medium text-foreground transition flex items-center gap-1.5 cursor-pointer text-xs flex-shrink-0"
+                      title="Browse default download folder"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5 text-primary" />
+                      <span>Browse...</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="pt-2 border-t border-border/50 space-y-3">

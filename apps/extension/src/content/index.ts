@@ -28,6 +28,33 @@ function formatBytes(bytes?: number): string {
   return `${val.toFixed(val >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
+function getYouTubeVideoTitle(): string {
+  // 1. YouTube DOM metadata title elements
+  const domTitle =
+    document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.textContent?.trim() ||
+    document.querySelector('#title h1 yt-formatted-string')?.textContent?.trim() ||
+    document.querySelector('h1.title yt-formatted-string')?.textContent?.trim() ||
+    (document.querySelector('h1.ytd-video-primary-info-renderer') as HTMLElement)?.innerText?.trim() ||
+    document.querySelector('meta[name="title"]')?.getAttribute('content')?.trim();
+
+  if (domTitle) {
+    return domTitle;
+  }
+
+  // 2. Video title parsed from player response
+  if (currentVideoTitle && currentVideoTitle.trim()) {
+    return currentVideoTitle.trim();
+  }
+
+  // 3. Fallback to clean document.title
+  const docTitle = document.title.replace(/ - YouTube$/, '').trim();
+  if (docTitle && docTitle !== 'YouTube') {
+    return docTitle;
+  }
+
+  return '';
+}
+
 // Listen for popup inspection messages
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === 'get_media') {
@@ -36,7 +63,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     document.querySelectorAll('video, audio, source').forEach((el) => {
       const src = (el as HTMLMediaElement).src || (el as HTMLSourceElement).src;
       if (src && (src.startsWith('http://') || src.startsWith('https://'))) {
-        const title = (el as HTMLMediaElement).title || document.title || 'Media Stream';
+        const title = (el as HTMLMediaElement).title || getYouTubeVideoTitle() || document.title || 'Media Stream';
         if (!media.some((m) => m.url === src)) {
           media.push({ url: src, title });
         }
@@ -110,9 +137,19 @@ function parsePlayerResponse(resp: any) {
   const resolutions: ('1080p' | '720p' | '480p' | '360p')[] = ['1080p', '720p', '480p', '360p'];
   for (const res of resolutions) {
     const numRes = parseInt(res, 10);
-    const videoStream = adaptiveFormats.find((f) => {
+    const matching = adaptiveFormats.filter((f) => {
       return f.height === numRes || (f.qualityLabel && f.qualityLabel.startsWith(res));
     });
+
+    // Pick highest quality stream matching resolution (preferably MP4/AVC1 with highest bitrate)
+    const videoStream = matching.sort((a, b) => {
+      const isMp4A = a.mimeType?.includes('video/mp4') ? 1 : 0;
+      const isMp4B = b.mimeType?.includes('video/mp4') ? 1 : 0;
+      if (isMp4A !== isMp4B) return isMp4B - isMp4A;
+      const brA = (a.contentLength ? parseInt(a.contentLength, 10) : 0) || a.bitrate || 0;
+      const brB = (b.contentLength ? parseInt(b.contentLength, 10) : 0) || b.bitrate || 0;
+      return brB - brA;
+    })[0];
 
     if (videoStream) {
       const videoBytes = getStreamBytes(videoStream);
@@ -167,72 +204,54 @@ function updateWidgetSizesWithMediaInfo(info: any) {
     .sort((a, b) => (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0))[0];
   if (audioFmt) {
     const sz = audioFmt.filesize || audioFmt.filesize_approx;
-    if (sz) calculatedSizes.audio = sz;
+    if (sz && (!calculatedSizes.audio || calculatedSizes.audio <= 0)) {
+      calculatedSizes.audio = sz;
+    }
   }
 
   const resolutions: ('1080p' | '720p' | '480p' | '360p')[] = ['1080p', '720p', '480p', '360p'];
   for (const res of resolutions) {
     const numRes = parseInt(res, 10);
-    const vFmt = formats.find((f) => {
+    const matching = formats.filter((f) => {
       return (
+        f.has_video &&
         f.resolution &&
         (f.resolution === res ||
           f.resolution.includes(`${numRes}p`) ||
           f.resolution.endsWith(`x${numRes}`))
       );
     });
+
+    const vFmt = matching.sort((a, b) => {
+      const isMp4A = a.ext === 'mp4' ? 1 : 0;
+      const isMp4B = b.ext === 'mp4' ? 1 : 0;
+      if (isMp4A !== isMp4B) return isMp4B - isMp4A;
+      const szA = a.filesize || a.filesize_approx || (a.tbr ? a.tbr * 1024 : 0);
+      const szB = b.filesize || b.filesize_approx || (b.tbr ? b.tbr * 1024 : 0);
+      return szB - szA;
+    })[0];
+
     if (vFmt) {
       const sz = vFmt.filesize || vFmt.filesize_approx;
-      if (sz) calculatedSizes[res] = sz;
+      // Only set if not already set by exact page data, to prevent size jitter
+      if (sz && (!calculatedSizes[res] || calculatedSizes[res]! <= 0)) {
+        calculatedSizes[res] = sz;
+      }
     }
   }
 
-  const bestFmt = formats
-    .filter((f) => f.has_video)
-    .sort((a, b) => (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0))[0];
-  if (bestFmt) {
-    const sz = bestFmt.filesize || bestFmt.filesize_approx;
-    if (sz) calculatedSizes.best = sz;
-  }
+  calculatedSizes.best =
+    calculatedSizes['1080p'] ||
+    calculatedSizes['720p'] ||
+    calculatedSizes['480p'] ||
+    calculatedSizes['360p'] ||
+    undefined;
 
   renderSizesInWidget();
 }
 
 function renderSizesInWidget() {
-  const widget = document.getElementById('novadownload-yt-player-widget');
-  if (!widget) return;
-
-  const updateBadge = (selector: string, size?: number) => {
-    const el = widget.querySelector(selector);
-    if (!el) return;
-
-    if (size && size > 0) {
-      const formatted = formatBytes(size);
-      let sizeEl = el.querySelector('.nd-size-badge');
-      if (sizeEl) {
-        sizeEl.textContent = formatted;
-      } else {
-        const span = document.createElement('span');
-        span.className = 'nd-size-badge';
-        span.style.cssText =
-          'margin-left: auto; margin-right: 6px; font-family: monospace; font-size: 10px; color: #38bdf8; font-weight: 600; opacity: 0.95;';
-        span.textContent = formatted;
-        const badge = el.querySelector('.nd-badge');
-        if (badge) {
-          el.insertBefore(span, badge);
-        } else {
-          el.appendChild(span);
-        }
-      }
-    }
-  };
-
-  updateBadge('.nd-menu-item[data-format="best"]', calculatedSizes.best);
-  updateBadge('.nd-menu-item[data-format="1080p"]', calculatedSizes['1080p']);
-  updateBadge('.nd-menu-item[data-format="720p"]', calculatedSizes['720p']);
-  updateBadge('.nd-menu-item[data-format="480p"]', calculatedSizes['480p']);
-  updateBadge('.nd-menu-item[data-format="360p"]', calculatedSizes['360p']);
-  updateBadge('.nd-menu-item[data-format="audio"]', calculatedSizes.audio);
+  // File sizes removed from extension as requested by user; desktop app calculates exact sizes.
 }
 
 async function triggerDownload(formatId: string = 'best', isAudio: boolean = false) {
@@ -240,7 +259,7 @@ async function triggerDownload(formatId: string = 'best', isAudio: boolean = fal
   const statusEl = document.getElementById('nd-yt-status-text');
   if (statusEl) statusEl.innerText = 'Sending...';
 
-  const chosenSize = calculatedSizes[formatId as keyof FormatSizes];
+  const videoTitle = getYouTubeVideoTitle();
 
   try {
     const response = await fetch(`${BRIDGE_URL}/api/v1/download`, {
@@ -250,8 +269,7 @@ async function triggerDownload(formatId: string = 'best', isAudio: boolean = fal
         url: currentUrl,
         format_id: formatId,
         is_audio_only: isAudio,
-        file_size: chosenSize || undefined,
-        title: currentVideoTitle || document.title.replace(' - YouTube', '').trim(),
+        title: videoTitle || undefined,
         referrer: document.referrer,
       }),
     });
@@ -272,8 +290,21 @@ async function triggerDownload(formatId: string = 'best', isAudio: boolean = fal
   }
 }
 
+let lastActiveUrl = '';
+
+function checkUrlChange() {
+  const currentHref = window.location.href;
+  if (lastActiveUrl && lastActiveUrl !== currentHref) {
+    calculatedSizes = {};
+    currentVideoTitle = '';
+    lastFetchedUrl = '';
+  }
+  lastActiveUrl = currentHref;
+}
+
 function injectYouTubePlayerWidget() {
   if (!window.location.hostname.includes('youtube.com')) return;
+  checkUrlChange();
   const isVideoPage =
     window.location.pathname.startsWith('/watch') || window.location.pathname.startsWith('/shorts');
 
@@ -404,11 +435,7 @@ function injectYouTubePlayerWidget() {
 
   widget.innerHTML = `
     <div class="nd-main-btn" id="nd-primary-btn">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-        <polyline points="7 10 12 15 17 10"></polyline>
-        <line x1="12" y1="15" x2="12" y2="3"></line>
-      </svg>
+      <img src="${chrome.runtime.getURL('icons/16.png')}" width="16" height="16" style="border-radius: 3px; display: block;" alt="Nova" />
       <span id="nd-yt-status-text">Download Video</span>
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <polyline points="6 9 12 15 18 9"></polyline>
@@ -474,6 +501,9 @@ function injectYouTubePlayerWidget() {
 if (typeof window !== 'undefined' && window.location.hostname.includes('youtube.com')) {
   window.addEventListener('yt-navigate-finish', () => {
     calculatedSizes = {};
+    currentVideoTitle = '';
+    lastFetchedUrl = '';
+    lastActiveUrl = window.location.href;
     injectYouTubePlayerWidget();
   });
   window.addEventListener('load', injectYouTubePlayerWidget);

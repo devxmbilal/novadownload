@@ -79,7 +79,7 @@ export const DownloadTable: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: DownloadStatus) => {
+  const getStatusBadge = (status: DownloadStatus, fileExists?: boolean) => {
     switch (status) {
       case 'downloading':
         return (
@@ -89,6 +89,17 @@ export const DownloadTable: React.FC = () => {
           </span>
         );
       case 'completed':
+        if (fileExists === false) {
+          return (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/25 shadow-sm"
+              title="File does not exist on disk (deleted from folder)"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              Not Exist
+            </span>
+          );
+        }
         return (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-500 border border-emerald-500/20">
             Completed
@@ -127,7 +138,11 @@ export const DownloadTable: React.FC = () => {
     openContextMenu(e.clientX, e.clientY, id);
   };
 
-  const handleOpenFile = (path: string) => {
+  const handleOpenFile = (path: string, fileExists?: boolean) => {
+    if (fileExists === false) {
+      alert('This file does not exist on disk (it was deleted or moved from the folder).');
+      return;
+    }
     invoke('open_file_or_dir', { path });
   };
 
@@ -214,7 +229,7 @@ export const DownloadTable: React.FC = () => {
                     onClick={() => setSelectedId(dl.id)}
                     onDoubleClick={() => {
                       if (dl.status === 'completed') {
-                        handleOpenFile(dl.file_path);
+                        handleOpenFile(dl.file_path, dl.file_exists);
                       }
                     }}
                     onContextMenu={(e) => handleRowContextMenu(e, dl.id)}
@@ -244,7 +259,7 @@ export const DownloadTable: React.FC = () => {
                     </td>
 
                     {/* Status Badge */}
-                    <td className="py-2.5 px-2 whitespace-nowrap">{getStatusBadge(dl.status)}</td>
+                    <td className="py-2.5 px-2 whitespace-nowrap">{getStatusBadge(dl.status, dl.file_exists)}</td>
 
                     {/* Progress Bar & Percentage */}
                     <td className="py-2.5 px-3">

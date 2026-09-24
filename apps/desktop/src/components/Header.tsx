@@ -1,13 +1,15 @@
 import React from 'react';
-import { Plus, Play, Pause, Search, Settings, Gauge, DownloadCloud, LayoutList, LayoutGrid } from 'lucide-react';
+import { Plus, Play, Pause, Search, Settings, Gauge, DownloadCloud, LayoutList, LayoutGrid, Trash2 } from 'lucide-react';
 import { useDownloadStore } from '../stores/downloadStore';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 
 export const Header: React.FC = () => {
-  const { pauseAll, resumeAll, searchQuery, setSearchQuery } = useDownloadStore();
+  const { downloads, pauseAll, resumeAll, deleteMissingDownloads, searchQuery, setSearchQuery } = useDownloadStore();
   const { openAddDialog, openSettings, viewMode, setViewMode } = useUIStore();
   const { settings, updateSettings } = useSettingsStore();
+
+  const missingCount = downloads.filter((d) => d.status === 'completed' && d.file_exists === false).length;
 
   const handleSpeedLimitChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -63,6 +65,17 @@ export const Header: React.FC = () => {
           <Pause className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
           <span>Pause All</span>
         </button>
+
+        {missingCount > 0 && (
+          <button
+            onClick={() => deleteMissingDownloads()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 text-xs font-medium transition cursor-pointer shadow-sm animate-in fade-in"
+            title="Clean records of files that were deleted from disk"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Clean Missing ({missingCount})</span>
+          </button>
+        )}
 
         {/* Speed Limiter Quick Menu */}
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-secondary/80 border border-border/50 text-xs font-medium">
