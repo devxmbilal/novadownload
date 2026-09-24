@@ -23,7 +23,7 @@ import { UrlProbeResult, MediaInfo, MediaFormat, MediaDownloadRequest } from '..
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 
 export const AddDownloadDialog: React.FC = () => {
-  const { isAddDialogOpen, prefilledUrl, closeAddDialog } = useUIStore();
+  const { isAddDialogOpen, prefilledUrl, prefilledMediaOptions, closeAddDialog } = useUIStore();
   const { addDownload, probeUrl, fetchDownloads } = useDownloadStore();
   const { settings } = useSettingsStore();
 
@@ -66,6 +66,19 @@ export const AddDownloadDialog: React.FC = () => {
 
   useEffect(() => {
     if (isAddDialogOpen) {
+      if (prefilledMediaOptions) {
+        if (prefilledMediaOptions.formatId) {
+          setSelectedFormatId(prefilledMediaOptions.formatId);
+        }
+        if (typeof prefilledMediaOptions.isAudioOnly === 'boolean') {
+          setIsAudioOnly(prefilledMediaOptions.isAudioOnly);
+          setCategory(prefilledMediaOptions.isAudioOnly ? 'Music' : 'Videos');
+        }
+        if (prefilledMediaOptions.title) {
+          setFileName(prefilledMediaOptions.title);
+        }
+      }
+
       if (prefilledUrl) {
         setUrl(prefilledUrl);
         handleUrlChange(prefilledUrl);
@@ -96,7 +109,7 @@ export const AddDownloadDialog: React.FC = () => {
       setIsAudioOnly(false);
       setSelectedFormatId('best');
     }
-  }, [isAddDialogOpen, prefilledUrl, settings]);
+  }, [isAddDialogOpen, prefilledUrl, prefilledMediaOptions, settings]);
 
   const handleUrlChange = (targetUrl: string) => {
     const trimmed = targetUrl.trim();
@@ -121,11 +134,13 @@ export const AddDownloadDialog: React.FC = () => {
     try {
       const info = await invoke<MediaInfo>('extract_media_info', { url: targetUrl });
       setMediaInfo(info);
-      setFileName(info.title);
-      setCategory('Videos');
+      setFileName((prev) => prev.trim() || info.title);
+      setCategory(isAudioOnly ? 'Music' : 'Videos');
+      if (prefilledMediaOptions?.formatId) {
+        setSelectedFormatId(prefilledMediaOptions.formatId);
+      }
     } catch (e: any) {
-      setProbeError(`Video extraction: ${e?.toString() || 'Could not parse media'}. Fallback to direct HTTP download.`);
-      handleProbe(targetUrl);
+      setProbeError(`Video extraction: ${e?.toString() || 'Could not parse media'}.`);
     } finally {
       setIsExtractingMedia(false);
     }
@@ -151,6 +166,21 @@ export const AddDownloadDialog: React.FC = () => {
     if (!url.trim()) return;
 
     try {
+      let calculatedSize: number | undefined = undefined;
+      if (isAudioOnly) {
+        const audioFmts = mediaInfo?.formats.filter((f) => f.has_audio && !f.has_video);
+        const bestAud = audioFmts?.sort((a, b) => (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0))[0];
+        calculatedSize = bestAud?.filesize || bestAud?.filesize_approx || prefilledMediaOptions?.fileSize || undefined;
+      } else if (selectedFormatId === 'best') {
+        const bestFmt = mediaInfo?.formats
+          .filter((f) => f.has_video)
+          .sort((a, b) => (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0))[0];
+        calculatedSize = bestFmt?.filesize || bestFmt?.filesize_approx || prefilledMediaOptions?.fileSize || undefined;
+      } else {
+        const fmt = mediaInfo?.formats.find((f) => f.format_id === selectedFormatId);
+        calculatedSize = fmt?.filesize || fmt?.filesize_approx || prefilledMediaOptions?.fileSize || undefined;
+      }
+
       const request: MediaDownloadRequest = {
         url: url.trim(),
         format_id: selectedFormatId,
@@ -158,6 +188,7 @@ export const AddDownloadDialog: React.FC = () => {
         directory: directory.trim() || undefined,
         file_name: fileName.trim() || (mediaInfo?.title ?? 'media_download'),
         thumbnail: mediaInfo?.thumbnail || undefined,
+        file_size: calculatedSize,
       };
 
       await invoke('create_media_download', { request });
@@ -171,9 +202,31 @@ export const AddDownloadDialog: React.FC = () => {
   const handleSubmit = async (startNow: boolean) => {
     if (!url.trim()) return;
 
-    if (isMediaUrl && mediaInfo) {
-      await handleMediaDownloadSubmit();
-      return;
+    if (isMediaUrl) {
+      if (mediaInfo) {
+        await handleMediaDownloadSubmit();
+        return;
+      }
+      // If mediaInfo is still extracting or not yet loaded, DO NOT fall back to direct HTTP GET!
+      // Direct HTTP GET downloads YouTube's 1 KB HTML redirect page.
+      // Instead, trigger create_media_download with format 'best' or prefilled options.
+      try {
+        const request: MediaDownloadRequest = {
+          url: url.trim(),
+          format_id: selectedFormatId || prefilledMediaOptions?.formatId || 'best',
+          is_audio_only: isAudioOnly || !!prefilledMediaOptions?.isAudioOnly,
+          directory: directory.trim() || undefined,
+          file_name: fileName.trim() || prefilledMediaOptions?.title || undefined,
+          file_size: prefilledMediaOptions?.fileSize || undefined,
+        };
+        await invoke('create_media_download', { request });
+        await fetchDownloads();
+        closeAddDialog();
+        return;
+      } catch (e: any) {
+        alert(`Error starting video download: ${e}`);
+        return;
+      }
     }
 
     try {
@@ -304,41 +357,49 @@ export const AddDownloadDialog: React.FC = () => {
 
               {/* Quality & Mode Picker */}
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/50">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-muted-foreground">Download Mode</label>
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsAudioOnly(false);
-                        setCategory('Videos');
-                      }}
-                      className={`flex-1 py-1.5 px-2 rounded-md font-medium text-xs flex items-center justify-center gap-1 transition ${
-                        !isAudioOnly
-                          ? 'bg-primary text-primary-foreground shadow-sm'
-                          : 'bg-secondary text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      <Video className="w-3.5 h-3.5" />
-                      <span>Video (MP4)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsAudioOnly(true);
-                        setCategory('Music');
-                      }}
-                      className={`flex-1 py-1.5 px-2 rounded-md font-medium text-xs flex items-center justify-center gap-1 transition ${
-                        isAudioOnly
-                          ? 'bg-primary text-primary-foreground shadow-sm'
-                          : 'bg-secondary text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      <Music className="w-3.5 h-3.5" />
-                      <span>Audio (MP3)</span>
-                    </button>
-                  </div>
-                </div>
+                {(() => {
+                  const audioFmts = mediaInfo.formats.filter((f) => f.has_audio && !f.has_video);
+                  const bestAud = audioFmts.sort((a, b) => (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0))[0];
+                  const audioSize = bestAud?.filesize || bestAud?.filesize_approx;
+
+                  return (
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-medium text-muted-foreground">Download Mode</label>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAudioOnly(false);
+                            setCategory('Videos');
+                          }}
+                          className={`flex-1 py-1.5 px-2 rounded-md font-medium text-xs flex items-center justify-center gap-1 transition ${
+                            !isAudioOnly
+                              ? 'bg-primary text-primary-foreground shadow-sm'
+                              : 'bg-secondary text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <Video className="w-3.5 h-3.5" />
+                          <span>Video (MP4)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAudioOnly(true);
+                            setCategory('Music');
+                          }}
+                          className={`flex-1 py-1.5 px-2 rounded-md font-medium text-xs flex items-center justify-center gap-1 transition ${
+                            isAudioOnly
+                              ? 'bg-primary text-primary-foreground shadow-sm'
+                              : 'bg-secondary text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <Music className="w-3.5 h-3.5" />
+                          <span>Audio {audioSize ? `(${formatBytes(audioSize)})` : '(MP3)'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {!isAudioOnly && (
                   <div className="space-y-1">
@@ -348,7 +409,16 @@ export const AddDownloadDialog: React.FC = () => {
                       onChange={(e) => setSelectedFormatId(e.target.value)}
                       className="w-full px-2.5 py-1.5 rounded-md bg-secondary/80 border border-border focus:border-primary outline-none transition text-xs text-foreground cursor-pointer"
                     >
-                      <option value="best">Best Quality Available (Auto Mux)</option>
+                      {(() => {
+                        const bestVid = mediaInfo.formats
+                          .filter((f) => f.has_video)
+                          .sort((a, b) => (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0))[0];
+                        const bestVidSize = bestVid?.filesize || bestVid?.filesize_approx;
+                        const bestLabel = bestVidSize
+                          ? `Best Available Quality • ${formatBytes(bestVidSize)}`
+                          : 'Best Quality Available (Auto Mux)';
+                        return <option value="best">{bestLabel}</option>;
+                      })()}
                       {(() => {
                         const getNumericHeight = (f: MediaFormat): number => {
                           if (!f.resolution) return 0;
@@ -369,7 +439,9 @@ export const AddDownloadDialog: React.FC = () => {
                           const resLabel = cleanHeight ? `${cleanHeight}p` : f.resolution || 'Video';
                           const fpsLabel = f.fps ? ` @ ${Math.round(f.fps)}fps` : '';
                           const extLabel = f.ext ? ` (${f.ext})` : '';
-                          return `${resLabel}${fpsLabel}${extLabel}`;
+                          const sizeVal = f.filesize || f.filesize_approx;
+                          const sizeLabel = sizeVal ? ` • ${formatBytes(sizeVal)}` : '';
+                          return `${resLabel}${fpsLabel}${extLabel}${sizeLabel}`;
                         };
 
                         return mediaInfo.formats

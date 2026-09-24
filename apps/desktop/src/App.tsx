@@ -42,7 +42,12 @@ export function App() {
     listen<any>('browser:download_received', (event) => {
       const payload = event.payload;
       if (payload?.url) {
-        openAddDialog(payload.url);
+        openAddDialog(payload.url, {
+          formatId: payload.format_id,
+          isAudioOnly: payload.is_audio_only,
+          fileSize: payload.file_size,
+          title: payload.title || payload.file_name,
+        });
       }
     }).then((unlisten) => {
       unlistenBrowser = unlisten;

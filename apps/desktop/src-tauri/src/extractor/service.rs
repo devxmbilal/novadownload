@@ -44,6 +44,7 @@ pub struct MediaDownloadRequest {
     pub file_name: Option<String>,
     pub quality_label: Option<String>,
     pub thumbnail: Option<String>,
+    pub file_size: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,9 +274,31 @@ impl ExtractorService {
 
                 let format_note = f["format_note"].as_str().map(|s| s.to_string());
                 let filesize = f["filesize"].as_i64();
-                let filesize_approx = f["filesize_approx"].as_i64();
+                let mut filesize_approx = f["filesize_approx"].as_i64();
                 let tbr = f["tbr"].as_f64();
                 let fps = f["fps"].as_f64();
+
+                if filesize.is_none() && filesize_approx.is_none() {
+                    let bitrate = tbr
+                        .or_else(|| {
+                            let vbr = f["vbr"].as_f64().unwrap_or(0.0);
+                            let abr = f["abr"].as_f64().unwrap_or(0.0);
+                            if vbr + abr > 0.0 {
+                                Some(vbr + abr)
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| f["vbr"].as_f64())
+                        .or_else(|| f["abr"].as_f64());
+
+                    if let (Some(br), Some(dur)) = (bitrate, duration) {
+                        if br > 0.0 && dur > 0.0 {
+                            // br in kbps -> bytes: (br * 1024 / 8) * dur
+                            filesize_approx = Some(((br * 1024.0 / 8.0) * dur) as i64);
+                        }
+                    }
+                }
 
                 formats.push(MediaFormat {
                     format_id,
@@ -291,6 +314,28 @@ impl ExtractorService {
                     has_video,
                     has_audio,
                 });
+            }
+        }
+
+        // Calculate best audio stream size to combine with video-only streams (e.g. YouTube DASH)
+        let best_audio_size = formats
+            .iter()
+            .filter(|f| f.has_audio && !f.has_video)
+            .map(|f| f.filesize.or(f.filesize_approx).unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+
+        if best_audio_size > 0 {
+            for f in &mut formats {
+                if f.has_video && !f.has_audio {
+                    if let Some(ref mut sz) = f.filesize {
+                        *sz += best_audio_size;
+                    } else if let Some(ref mut approx) = f.filesize_approx {
+                        *approx += best_audio_size;
+                    } else if duration.is_some() {
+                        f.filesize_approx = Some(best_audio_size);
+                    }
+                }
             }
         }
 

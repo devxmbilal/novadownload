@@ -334,7 +334,7 @@ pub async fn create_media_download(
         file_path: final_filepath.to_string_lossy().to_string(),
         directory: canonical_target_dir.to_string_lossy().to_string(),
         mime_type: Some(if request.is_audio_only { "audio/mp3".to_string() } else { "video/mp4".to_string() }),
-        file_size: None,
+        file_size: request.file_size,
         downloaded_size: 0,
         status: DownloadStatus::Downloading,
         download_type,
@@ -469,6 +469,21 @@ pub async fn spawn_media_download(
         let mut last_emit = std::time::Instant::now();
         let mut last_db_update = std::time::Instant::now();
         let mut is_postprocessing = false;
+
+        if locked_total_size > 0 {
+            let _ = app_handle.emit("download:progress", serde_json::json!({
+                "download_id": dl_id,
+                "downloaded_size": monotonic_downloaded,
+                "file_size": Some(locked_total_size),
+                "percentage": 0.0,
+                "speed": 0.0,
+                "average_speed": 0.0,
+                "eta": null,
+                "active_connections": 1,
+                "status": "downloading",
+                "progress_sequence": progress_sequence
+            }));
+        }
 
         if let Some(stdout) = child.stdout.take() {
             let mut reader = BufReader::new(stdout).lines();
@@ -737,9 +752,15 @@ pub fn parse_nova_prog_line(line: &str) -> Option<NovaProgInfo> {
     let eta_raw = parts[5].trim();
 
     let total_bytes = if total_bytes_raw != "NA" && !total_bytes_raw.is_empty() {
-        total_bytes_raw.parse::<i64>().ok()
+        total_bytes_raw
+            .parse::<i64>()
+            .ok()
+            .or_else(|| total_bytes_raw.parse::<f64>().map(|v| v as i64).ok())
     } else if total_est_raw != "NA" && !total_est_raw.is_empty() {
-        total_est_raw.parse::<i64>().ok()
+        total_est_raw
+            .parse::<i64>()
+            .ok()
+            .or_else(|| total_est_raw.parse::<f64>().map(|v| v as i64).ok())
     } else {
         None
     };

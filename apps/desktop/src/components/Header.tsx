@@ -18,9 +18,11 @@ export const Header: React.FC = () => {
     <header className="h-14 border-b border-border/70 bg-card/60 backdrop-blur-md flex items-center justify-between px-4 z-20 flex-shrink-0 select-none">
       {/* Brand & Logo */}
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-nova-600 flex items-center justify-center shadow-md shadow-primary/20">
-          <DownloadCloud className="w-5 h-5 text-white" />
-        </div>
+        <img
+          src="/logonova.png"
+          alt="NovaDownload"
+          className="w-8 h-8 rounded-lg object-contain shadow-md shadow-primary/25 border border-primary/20"
+        />
         <div>
           <span className="font-bold text-base tracking-tight bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
             NovaDownload

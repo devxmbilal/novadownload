@@ -1,10 +1,18 @@
 import { create } from 'zustand';
 import { Download } from '../types';
 
+export interface PrefilledMediaOptions {
+  formatId?: string;
+  isAudioOnly?: boolean;
+  fileSize?: number;
+  title?: string;
+}
+
 interface UIState {
   currentView: 'downloads' | 'dashboard' | 'scheduled';
   isAddDialogOpen: boolean;
   prefilledUrl: string;
+  prefilledMediaOptions: PrefilledMediaOptions | null;
   viewMode: 'list' | 'grid';
   isSettingsOpen: boolean;
   isDetailsOpen: boolean;
@@ -18,7 +26,7 @@ interface UIState {
 
   setCurrentView: (view: 'downloads' | 'dashboard' | 'scheduled') => void;
   setViewMode: (mode: 'list' | 'grid') => void;
-  openAddDialog: (url?: string) => void;
+  openAddDialog: (url?: string, mediaOptions?: PrefilledMediaOptions) => void;
   closeAddDialog: () => void;
   openSettings: () => void;
   closeSettings: () => void;
@@ -33,6 +41,7 @@ export const useUIStore = create<UIState>((set) => ({
   currentView: 'downloads',
   isAddDialogOpen: false,
   prefilledUrl: '',
+  prefilledMediaOptions: null,
   viewMode: 'list',
   isSettingsOpen: false,
   isDetailsOpen: true,
@@ -46,8 +55,9 @@ export const useUIStore = create<UIState>((set) => ({
 
   setCurrentView: (view) => set({ currentView: view }),
   setViewMode: (mode) => set({ viewMode: mode }),
-  openAddDialog: (url = '') => set({ isAddDialogOpen: true, prefilledUrl: url }),
-  closeAddDialog: () => set({ isAddDialogOpen: false, prefilledUrl: '' }),
+  openAddDialog: (url = '', mediaOptions) =>
+    set({ isAddDialogOpen: true, prefilledUrl: url, prefilledMediaOptions: mediaOptions || null }),
+  closeAddDialog: () => set({ isAddDialogOpen: false, prefilledUrl: '', prefilledMediaOptions: null }),
   openSettings: () => set({ isSettingsOpen: true }),
   closeSettings: () => set({ isSettingsOpen: false }),
   toggleDetails: () => set((state) => ({ isDetailsOpen: !state.isDetailsOpen })),

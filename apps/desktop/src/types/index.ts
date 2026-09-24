@@ -169,6 +169,7 @@ export interface MediaDownloadRequest {
   file_name?: string;
   quality_label?: string;
   thumbnail?: string;
+  file_size?: number;
 }
 
 export interface ExtractorStatus {
