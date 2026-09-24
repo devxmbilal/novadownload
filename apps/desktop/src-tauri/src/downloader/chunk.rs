@@ -123,10 +123,18 @@ pub async fn download_chunk_worker(
 
     let mut stream = resp.bytes_stream();
 
-    while let Some(item) = stream.next().await {
-        if cancel_token.is_cancelled() {
-            return Err(AppError::Cancelled);
-        }
+    loop {
+        let item = tokio::select! {
+            _ = cancel_token.cancelled() => {
+                return Err(AppError::Cancelled);
+            }
+            res = stream.next() => {
+                match res {
+                    Some(i) => i,
+                    None => break,
+                }
+            }
+        };
 
         match item {
             Ok(bytes) => {

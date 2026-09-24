@@ -219,6 +219,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               return d;
             }
 
+            // If the download was paused or cancelled in UI, ignore late in-flight downloading progress events
+            if ((d.status === 'paused' || d.status === 'cancelled') && payload.status === 'downloading') {
+              return d;
+            }
+
             const isCompleted = payload.status === 'completed';
             const totalBytes = payload.file_size ?? d.file_size;
             const downloadedBytes = isCompleted

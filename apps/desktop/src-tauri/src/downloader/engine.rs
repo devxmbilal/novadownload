@@ -51,6 +51,25 @@ impl DownloadEngine {
         self.global_limiter.set_limit(bytes_per_sec);
     }
 
+    pub async fn register_task(&self, download_id: &str, cancel_token: CancellationToken) -> bool {
+        let mut tasks = self.active_tasks.write().await;
+        if tasks.contains_key(download_id) {
+            return false;
+        }
+        tasks.insert(download_id.to_string(), ActiveTaskHandle { cancel_token });
+        true
+    }
+
+    pub async fn unregister_task(&self, download_id: &str) {
+        let mut tasks = self.active_tasks.write().await;
+        tasks.remove(download_id);
+    }
+
+    pub async fn is_task_active(&self, download_id: &str) -> bool {
+        let tasks = self.active_tasks.read().await;
+        tasks.contains_key(download_id)
+    }
+
     pub async fn start_download(&self, app: AppHandle, download_id: &str) -> AppResult<()> {
         let dl_opt = self.db.get_download(download_id).await?;
         let mut dl = match dl_opt {
@@ -284,10 +303,18 @@ impl DownloadEngine {
         // Track which chunks have new data since the last DB flush.
         let mut dirty_chunks: HashSet<u32> = HashSet::new();
 
-        while let Some(msg) = rx.recv().await {
-            if cancel_token.is_cancelled() {
-                return Err(AppError::Cancelled);
-            }
+        loop {
+            let msg = tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    return Err(AppError::Cancelled);
+                }
+                res = rx.recv() => {
+                    match res {
+                        Some(m) => m,
+                        None => break,
+                    }
+                }
+            };
 
             match msg {
                 // ChunkProgress carries the ABSOLUTE downloaded_bytes for the chunk.
@@ -463,10 +490,18 @@ impl DownloadEngine {
         let mut last_emit = std::time::Instant::now();
         let mut last_db_update = std::time::Instant::now();
 
-        while let Some(item) = stream.next().await {
-            if cancel_token.is_cancelled() {
-                return Err(AppError::Cancelled);
-            }
+        loop {
+            let item = tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    return Err(AppError::Cancelled);
+                }
+                res = stream.next() => {
+                    match res {
+                        Some(i) => i,
+                        None => break,
+                    }
+                }
+            };
 
             match item {
                 Ok(bytes) => {
