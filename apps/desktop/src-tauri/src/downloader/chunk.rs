@@ -64,96 +64,84 @@ pub async fn download_chunk_worker(
 ) -> AppResult<()> {
     let chunk_index = chunk.chunk_index;
     let mut current_downloaded = chunk.downloaded_bytes;
-    let current_start = chunk.start_byte + current_downloaded;
     let end_byte = chunk.end_byte;
 
-    if current_start > end_byte {
-        let _ = progress_tx.send(ChunkProgressMsg::ChunkCompleted { chunk_index }).await;
-        return Ok(());
-    }
+    let mut retries = 0;
+    const MAX_RETRIES: u32 = 8;
 
-    let mut req = client.get(&url);
-    req = req.header(RANGE, format!("bytes={}-{}", current_start, end_byte));
-
-    if let Some(hdrs) = headers_map {
-        for (k, v) in hdrs {
-            req = req.header(k, v);
+    while retries < MAX_RETRIES {
+        if cancel_token.is_cancelled() {
+            return Err(AppError::Cancelled);
         }
-    }
 
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = progress_tx
-                .send(ChunkProgressMsg::ChunkFailed {
-                    chunk_index,
-                    error: e.to_string(),
-                })
-                .await;
-            return Err(AppError::Network(e.to_string()));
+        let current_start = chunk.start_byte + current_downloaded;
+        if current_start > end_byte {
+            let _ = progress_tx.send(ChunkProgressMsg::ChunkCompleted { chunk_index }).await;
+            return Ok(());
         }
-    };
 
-    let status = resp.status();
-    if !status.is_success() && status.as_u16() != 206 {
-        let err_msg = format!("HTTP error {}", status);
-        let _ = progress_tx
-            .send(ChunkProgressMsg::ChunkFailed {
-                chunk_index,
-                error: err_msg.clone(),
-            })
-            .await;
-        return Err(AppError::Http {
-            status: status.as_u16(),
-            message: err_msg,
-        });
-    }
+        let mut req = client.get(&url);
+        req = req.header(RANGE, format!("bytes={}-{}", current_start, end_byte));
+        req = req.header("Accept-Encoding", "identity");
 
-    // Open file for random access writing at offset
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(&part_filepath)
-        .await
-        .map_err(|e| AppError::FileSystem(e.to_string()))?;
-
-    file.seek(SeekFrom::Start(current_start as u64))
-        .await
-        .map_err(|e| AppError::FileSystem(e.to_string()))?;
-
-    let mut stream = resp.bytes_stream();
-
-    loop {
-        let item = tokio::select! {
-            _ = cancel_token.cancelled() => {
-                return Err(AppError::Cancelled);
+        if let Some(ref hdrs) = headers_map {
+            for (k, v) in hdrs {
+                req = req.header(k, v);
             }
-            res = stream.next() => {
-                match res {
-                    Some(i) => i,
-                    None => break,
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                retries += 1;
+                if retries >= MAX_RETRIES {
+                    let _ = progress_tx
+                        .send(ChunkProgressMsg::ChunkFailed {
+                            chunk_index,
+                            error: e.to_string(),
+                        })
+                        .await;
+                    return Err(AppError::Network(e.to_string()));
                 }
+                tokio::select! {
+                    _ = cancel_token.cancelled() => return Err(AppError::Cancelled),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(400 * retries as u64)) => {}
+                }
+                continue;
             }
         };
 
-        match item {
-            Ok(bytes) => {
-                let len = bytes.len();
-                limiter.acquire(len).await;
-
-                file.write_all(&bytes)
-                    .await
-                    .map_err(|e| AppError::FileSystem(e.to_string()))?;
-
-                current_downloaded += len as i64;
-
+        let status = resp.status();
+        if !status.is_success() && status.as_u16() != 206 {
+            retries += 1;
+            if retries >= MAX_RETRIES {
+                let err_msg = format!("HTTP error {}", status);
                 let _ = progress_tx
-                    .send(ChunkProgressMsg::ChunkProgress {
+                    .send(ChunkProgressMsg::ChunkFailed {
                         chunk_index,
-                        downloaded_bytes: current_downloaded,
+                        error: err_msg.clone(),
                     })
                     .await;
+                return Err(AppError::Http {
+                    status: status.as_u16(),
+                    message: err_msg,
+                });
             }
+            tokio::select! {
+                _ = cancel_token.cancelled() => return Err(AppError::Cancelled),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(400 * retries as u64)) => {}
+            }
+            continue;
+        }
+
+        // Open file for random access writing at offset
+        let mut file = match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&part_filepath)
+            .await
+        {
+            Ok(f) => f,
             Err(e) => {
                 let _ = progress_tx
                     .send(ChunkProgressMsg::ChunkFailed {
@@ -161,14 +149,96 @@ pub async fn download_chunk_worker(
                         error: e.to_string(),
                     })
                     .await;
-                return Err(AppError::Network(e.to_string()));
+                return Err(AppError::FileSystem(e.to_string()));
+            }
+        };
+
+        if let Err(e) = file.seek(SeekFrom::Start(current_start as u64)).await {
+            let _ = progress_tx
+                .send(ChunkProgressMsg::ChunkFailed {
+                    chunk_index,
+                    error: e.to_string(),
+                })
+                .await;
+            return Err(AppError::FileSystem(e.to_string()));
+        }
+
+        let mut stream = resp.bytes_stream();
+        let mut stream_failed = false;
+
+        loop {
+            let item = tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    return Err(AppError::Cancelled);
+                }
+                res = stream.next() => {
+                    match res {
+                        Some(i) => i,
+                        None => break,
+                    }
+                }
+            };
+
+            match item {
+                Ok(bytes) => {
+                    let len = bytes.len();
+                    limiter.acquire(len).await;
+
+                    if let Err(e) = file.write_all(&bytes).await {
+                        let _ = progress_tx
+                            .send(ChunkProgressMsg::ChunkFailed {
+                                chunk_index,
+                                error: e.to_string(),
+                            })
+                            .await;
+                        return Err(AppError::FileSystem(e.to_string()));
+                    }
+
+                    current_downloaded += len as i64;
+                    // Reset retry counter on successful data chunk received
+                    retries = 0;
+
+                    let _ = progress_tx
+                        .send(ChunkProgressMsg::ChunkProgress {
+                            chunk_index,
+                            downloaded_bytes: current_downloaded,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    tracing::warn!("Chunk {} stream interrupted: {}. Resuming from byte offset...", chunk_index, e);
+                    stream_failed = true;
+                    break;
+                }
             }
         }
-    }
 
-    file.flush()
-        .await
-        .map_err(|e| AppError::FileSystem(e.to_string()))?;
+        let _ = file.flush().await;
+
+        if stream_failed {
+            retries += 1;
+            if retries >= MAX_RETRIES {
+                let _ = progress_tx
+                    .send(ChunkProgressMsg::ChunkFailed {
+                        chunk_index,
+                        error: "Connection interrupted and maximum retries exceeded".to_string(),
+                    })
+                    .await;
+                return Err(AppError::Network("Connection interrupted and maximum retries exceeded".to_string()));
+            }
+            tokio::select! {
+                _ = cancel_token.cancelled() => return Err(AppError::Cancelled),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(400 * retries as u64)) => {}
+            }
+            continue;
+        }
+
+        // If chunk completed
+        if chunk.start_byte + current_downloaded >= end_byte {
+            let _ = progress_tx.send(ChunkProgressMsg::ChunkCompleted { chunk_index }).await;
+            return Ok(());
+        }
+    }
 
     let _ = progress_tx.send(ChunkProgressMsg::ChunkCompleted { chunk_index }).await;
     Ok(())

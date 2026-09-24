@@ -33,9 +33,14 @@ pub struct DownloadEngine {
 impl DownloadEngine {
     pub fn new(db: Database) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(15))
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(32)
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .no_zstd()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_default();
 
@@ -453,121 +458,182 @@ impl DownloadEngine {
         final_path: PathBuf,
         cancel_token: CancellationToken,
     ) -> AppResult<()> {
-        let mut req = self.http_client.get(&dl.url);
         let initial_offset = if part_path.exists() {
             tokio::fs::metadata(&part_path).await.map(|m| m.len() as i64).unwrap_or(0)
         } else {
             0
         };
 
-        if initial_offset > 0 {
-            req = req.header("Range", format!("bytes={}-", initial_offset));
-        }
-
-        let resp = req.send().await.map_err(|e| AppError::Network(e.to_string()))?;
-        let status = resp.status();
-        if !status.is_success() && status.as_u16() != 206 {
-            return Err(AppError::Http {
-                status: status.as_u16(),
-                message: format!("HTTP error {}", status),
-            });
-        }
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(initial_offset > 0 && status.as_u16() == 206)
-            .truncate(initial_offset == 0 || status.as_u16() != 206)
-            .open(&part_path)
-            .await
-            .map_err(|e| AppError::FileSystem(e.to_string()))?;
-
-        let mut current_downloaded = if status.as_u16() == 206 { initial_offset } else { 0 };
+        let mut current_downloaded = initial_offset;
         let mut monotonic_downloaded = current_downloaded;
         let mut progress_sequence = dl.progress_sequence;
-        let mut stream = resp.bytes_stream();
         let mut speed_tracker = SpeedTracker::new(current_downloaded, dl.file_size, 3.0);
         let mut last_emit = std::time::Instant::now();
         let mut last_db_update = std::time::Instant::now();
 
-        loop {
-            let item = tokio::select! {
-                _ = cancel_token.cancelled() => {
-                    return Err(AppError::Cancelled);
-                }
-                res = stream.next() => {
-                    match res {
-                        Some(i) => i,
-                        None => break,
+        let mut retries = 0;
+        const MAX_RETRIES: u32 = 8;
+
+        while retries < MAX_RETRIES {
+            if cancel_token.is_cancelled() {
+                return Err(AppError::Cancelled);
+            }
+
+            let mut req = self.http_client.get(&dl.url);
+            req = req.header("Accept-Encoding", "identity");
+
+            if current_downloaded > 0 {
+                req = req.header("Range", format!("bytes={}-", current_downloaded));
+            }
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    retries += 1;
+                    if retries >= MAX_RETRIES {
+                        return Err(AppError::Network(e.to_string()));
                     }
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => return Err(AppError::Cancelled),
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(400 * retries as u64)) => {}
+                    }
+                    continue;
                 }
             };
 
-            match item {
-                Ok(bytes) => {
-                    let len = bytes.len();
-                    self.global_limiter.acquire(len).await;
+            let status = resp.status();
+            if !status.is_success() && status.as_u16() != 206 {
+                retries += 1;
+                if retries >= MAX_RETRIES {
+                    return Err(AppError::Http {
+                        status: status.as_u16(),
+                        message: format!("HTTP error {}", status),
+                    });
+                }
+                tokio::select! {
+                    _ = cancel_token.cancelled() => return Err(AppError::Cancelled),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(400 * retries as u64)) => {}
+                }
+                continue;
+            }
 
-                    file.write_all(&bytes)
-                        .await
-                        .map_err(|e| AppError::FileSystem(e.to_string()))?;
+            let is_range_resp = status.as_u16() == 206;
+            if current_downloaded > 0 && !is_range_resp {
+                // Server does not support resume, start from beginning
+                current_downloaded = 0;
+                monotonic_downloaded = 0;
+            }
 
-                    current_downloaded += len as i64;
-                    monotonic_downloaded = monotonic_downloaded.max(current_downloaded);
+            let mut file = match OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(current_downloaded > 0 && is_range_resp)
+                .truncate(current_downloaded == 0 || !is_range_resp)
+                .open(&part_path)
+                .await
+            {
+                Ok(f) => f,
+                Err(e) => return Err(AppError::FileSystem(e.to_string())),
+            };
 
-                    let now = std::time::Instant::now();
+            let mut stream = resp.bytes_stream();
+            let mut stream_interrupted = false;
 
-                    // Throttle UI events: ~10 per second
-                    if now.duration_since(last_emit).as_millis() >= 100 {
-                        last_emit = now;
-                        progress_sequence += 1;
-
-                        // Single record_progress call per tick — values shared with DB write
-                        let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
-
-                        let percentage = dl.file_size.map_or(0.0, |sz| {
-                            if sz > 0 {
-                                ((monotonic_downloaded as f64 / sz as f64) * 100.0).min(100.0)
-                            } else {
-                                0.0
-                            }
-                        });
-
-                        let _ = app.emit("download:progress", DownloadProgressPayload {
-                            download_id: dl.id.clone(),
-                            downloaded_size: monotonic_downloaded,
-                            file_size: dl.file_size,
-                            percentage,
-                            speed,
-                            average_speed: avg_speed,
-                            eta,
-                            active_connections: 1,
-                            status: DownloadStatus::Downloading,
-                            progress_sequence,
-                        });
-
-                        // Throttle DB writes: every 1.5 seconds — reuse speed values from above
-                        if now.duration_since(last_db_update).as_millis() >= 1500 {
-                            last_db_update = now;
-                            let _ = self.db.update_download_progress(
-                                &dl.id,
-                                monotonic_downloaded,
-                                speed,
-                                avg_speed,
-                                eta,
-                                1,
-                                progress_sequence,
-                            ).await;
+            loop {
+                let item = tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        return Err(AppError::Cancelled);
+                    }
+                    res = stream.next() => {
+                        match res {
+                            Some(i) => i,
+                            None => break,
                         }
                     }
-                }
-                Err(e) => {
-                    return Err(AppError::Network(e.to_string()));
+                };
+
+                match item {
+                    Ok(bytes) => {
+                        let len = bytes.len();
+                        self.global_limiter.acquire(len).await;
+
+                        if let Err(e) = file.write_all(&bytes).await {
+                            return Err(AppError::FileSystem(e.to_string()));
+                        }
+
+                        current_downloaded += len as i64;
+                        monotonic_downloaded = monotonic_downloaded.max(current_downloaded);
+                        retries = 0;
+
+                        let now = std::time::Instant::now();
+
+                        // Throttle UI events: ~10 per second
+                        if now.duration_since(last_emit).as_millis() >= 100 {
+                            last_emit = now;
+                            progress_sequence += 1;
+
+                            let (speed, avg_speed, eta) = speed_tracker.record_progress(monotonic_downloaded);
+
+                            let percentage = dl.file_size.map_or(0.0, |sz| {
+                                if sz > 0 {
+                                    ((monotonic_downloaded as f64 / sz as f64) * 100.0).min(100.0)
+                                } else {
+                                    0.0
+                                }
+                            });
+
+                            let _ = app.emit("download:progress", DownloadProgressPayload {
+                                download_id: dl.id.clone(),
+                                downloaded_size: monotonic_downloaded,
+                                file_size: dl.file_size,
+                                percentage,
+                                speed,
+                                average_speed: avg_speed,
+                                eta,
+                                active_connections: 1,
+                                status: DownloadStatus::Downloading,
+                                progress_sequence,
+                            });
+
+                            if now.duration_since(last_db_update).as_millis() >= 1500 {
+                                last_db_update = now;
+                                let _ = self.db.update_download_progress(
+                                    &dl.id,
+                                    monotonic_downloaded,
+                                    speed,
+                                    avg_speed,
+                                    eta,
+                                    1,
+                                    progress_sequence,
+                                ).await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Single-stream download interrupted: {}. Retrying...", e);
+                        stream_interrupted = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        file.flush().await.map_err(|e| AppError::FileSystem(e.to_string()))?;
+            let _ = file.flush().await;
+
+            if stream_interrupted {
+                retries += 1;
+                if retries >= MAX_RETRIES {
+                    return Err(AppError::Network("Single stream download dropped and maximum retries exceeded".to_string()));
+                }
+                tokio::select! {
+                    _ = cancel_token.cancelled() => return Err(AppError::Cancelled),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(400 * retries as u64)) => {}
+                }
+                continue;
+            }
+
+            // Normal completion
+            break;
+        }
 
         if cancel_token.is_cancelled() {
             return Err(AppError::Cancelled);
