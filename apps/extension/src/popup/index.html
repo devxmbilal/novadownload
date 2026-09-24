@@ -8,7 +8,8 @@
     :root {
       --bg: #0f172a;
       --card: #1e293b;
-      --primary: #0e8ce9;
+      --primary: #0284c7;
+      --primary-hover: #0ea5e9;
       --text: #f8fafc;
       --muted: #94a3b8;
       --border: #334155;
@@ -19,7 +20,7 @@
       padding: 0;
     }
     body {
-      width: 320px;
+      width: 340px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
@@ -32,16 +33,16 @@
       align-items: center;
       justify-content: space-between;
       margin-bottom: 12px;
-      padding-bottom: 8px;
+      padding-bottom: 10px;
       border-bottom: 1px solid var(--border);
     }
     .brand {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
       font-weight: 700;
       font-size: 14px;
-      color: #38a9f8;
+      color: #38bdf8;
     }
     .status {
       display: flex;
@@ -65,8 +66,66 @@
       border-radius: 50%;
       background: currentColor;
     }
-    .form-group {
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
       margin-bottom: 12px;
+    }
+    .toggle-label {
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .toggle-sub {
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #475569;
+      transition: 0.2s;
+      border-radius: 20px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.2s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: var(--primary);
+    }
+    input:checked + .slider:before {
+      transform: translateX(16px);
+    }
+    .form-group {
+      margin-bottom: 10px;
     }
     label {
       display: block;
@@ -75,20 +134,21 @@
       color: var(--muted);
       font-size: 11px;
     }
-    input {
+    input[type="text"] {
       width: 100%;
       padding: 8px 10px;
       border-radius: 6px;
       border: 1px solid var(--border);
       background: var(--card);
       color: var(--text);
-      font-size: 12px;
+      font-size: 11.5px;
+      font-family: monospace;
       outline: none;
     }
-    input:focus {
+    input[type="text"]:focus {
       border-color: var(--primary);
     }
-    button {
+    button.primary-btn {
       width: 100%;
       padding: 8px 12px;
       border-radius: 6px;
@@ -98,48 +158,90 @@
       font-weight: 600;
       font-size: 12px;
       cursor: pointer;
-      transition: opacity 0.2s;
+      transition: background 0.2s;
     }
-    button:hover {
-      opacity: 0.9;
+    button.primary-btn:hover {
+      background: var(--primary-hover);
     }
     .media-list {
       margin-top: 12px;
       border-top: 1px solid var(--border);
-      padding-top: 8px;
+      padding-top: 10px;
+      max-height: 210px;
+      overflow-y: auto;
     }
     .media-title {
       font-size: 11px;
       font-weight: 600;
       color: var(--muted);
       margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
     .media-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 6px;
       padding: 6px 8px;
-      background: rgba(255, 255, 255, 0.03);
-      border-radius: 4px;
-      margin-bottom: 4px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      margin-bottom: 5px;
       font-size: 11px;
+    }
+    .media-info {
+      flex: 1;
+      min-width: 0;
     }
     .media-name {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      max-width: 200px;
+      display: block;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .media-url {
+      font-size: 9.5px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: block;
+      font-family: monospace;
     }
     .media-btn {
-      width: auto;
-      padding: 3px 8px;
-      font-size: 10px;
+      padding: 4px 9px;
+      font-size: 10.5px;
+      font-weight: 600;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .media-btn:hover {
+      background: var(--primary-hover);
+    }
+    .empty-media {
+      text-align: center;
+      color: var(--muted);
+      padding: 12px 0;
+      font-size: 11px;
     }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
       <span>NovaDownload</span>
     </div>
     <div id="statusBadge" class="status offline">
@@ -148,16 +250,32 @@
     </div>
   </div>
 
-  <div class="form-group">
-    <label for="downloadUrl">Download URL</label>
-    <input type="text" id="downloadUrl" placeholder="https://example.com/file.zip">
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Capture Browser Downloads</div>
+      <div class="toggle-sub">Intercept files & links automatically (IDM Mode)</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="captureToggle" checked>
+      <span class="slider"></span>
+    </label>
   </div>
 
-  <button id="sendBtn">Send to NovaDownload</button>
+  <div class="form-group">
+    <label for="downloadUrl">Download URL</label>
+    <input type="text" id="downloadUrl" placeholder="Paste link to download...">
+  </div>
 
-  <div class="media-list" id="mediaSection" style="display: none;">
-    <div class="media-title">Detected Media on Page</div>
-    <div id="mediaItems"></div>
+  <button class="primary-btn" id="sendBtn">Download with NovaDownload</button>
+
+  <div class="media-list" id="mediaSection">
+    <div class="media-title">
+      <span>Scanned Media & Files</span>
+      <span id="mediaCount" style="font-size: 10px; opacity: 0.7;"></span>
+    </div>
+    <div id="mediaItems">
+      <div class="empty-media">No media detected on current tab</div>
+    </div>
   </div>
 
   <script type="module" src="popup.ts"></script>

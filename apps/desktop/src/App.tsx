@@ -26,7 +26,7 @@ export function App() {
   } = useDownloadStore();
 
   const { fetchSettings, detectFFmpeg } = useSettingsStore();
-  const { currentView, openAddDialog, openSettings, viewMode } = useUIStore();
+  const { currentView, openAddDialog, openSettings, viewMode, addDialogSessions, closeAddDialog } = useUIStore();
 
   useEffect(() => {
     // Initial fetch
@@ -143,7 +143,15 @@ export function App() {
       </footer>
 
       {/* Modals & Menus */}
-      <AddDownloadDialog />
+      {addDialogSessions.map((session, index) => (
+        <AddDownloadDialog
+          key={session.id}
+          session={session}
+          index={index}
+          totalCount={addDialogSessions.length}
+          onClose={() => closeAddDialog(session.id)}
+        />
+      ))}
       <SettingsDialog />
       <DownloadCompleteModal />
       <ContextMenu />

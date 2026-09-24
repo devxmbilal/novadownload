@@ -455,7 +455,8 @@ pub async fn spawn_media_download(
         cmd.args(&["-f", &format!("{}+bestaudio/best", format_id), "--merge-output-format", "mp4"]);
     }
 
-    cmd.args(&["-o", &dl.file_path, &dl.url]);
+    let normalized_url = crate::extractor::ExtractorService::normalize_url(&dl.url);
+    cmd.args(&["-o", &dl.file_path, &normalized_url]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -549,6 +550,11 @@ pub async fn spawn_media_download(
                     is_postprocessing = true;
                     max_overall_pct = 99.0;
                     progress_sequence += 1;
+                    let actual_sum: i64 = stream_total.values().sum();
+                    if actual_sum > 0 {
+                        locked_total_size = actual_sum;
+                        monotonic_downloaded = actual_sum;
+                    }
                     let _ = app_handle.emit("download:progress", serde_json::json!({
                         "download_id": dl_id,
                         "downloaded_size": monotonic_downloaded,

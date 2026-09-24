@@ -11,7 +11,7 @@ function generateManifestPlugin(): Plugin {
         name: 'NovaDownload Integration',
         version: '1.1.0',
         description: 'Send downloads and media streams directly to NovaDownload Desktop Accelerator.',
-        permissions: ['contextMenus', 'activeTab', 'storage', 'downloads'],
+        permissions: ['contextMenus', 'activeTab', 'storage', 'downloads', 'notifications'],
         host_permissions: [
           'http://127.0.0.1:64123/*',
           'http://localhost:64123/*',
@@ -35,6 +35,14 @@ function generateManifestPlugin(): Plugin {
             matches: ['<all_urls>'],
             js: ['assets/content.js'],
             run_at: 'document_idle',
+            all_frames: true,
+            match_about_blank: true,
+          },
+        ],
+        web_accessible_resources: [
+          {
+            resources: ['icons/*'],
+            matches: ['<all_urls>'],
           },
         ],
       };

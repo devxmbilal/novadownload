@@ -16,6 +16,7 @@ function generateFirefoxManifestPlugin(): Plugin {
           'activeTab',
           'storage',
           'downloads',
+          'notifications',
           'http://127.0.0.1:64123/*',
           'http://localhost:64123/*',
           '<all_urls>',
@@ -37,8 +38,11 @@ function generateFirefoxManifestPlugin(): Plugin {
             matches: ['<all_urls>'],
             js: ['assets/content.js'],
             run_at: 'document_idle',
+            all_frames: true,
+            match_about_blank: true,
           },
         ],
+        web_accessible_resources: ['icons/*'],
       };
 
       const outDir = path.resolve(__dirname, 'dist/firefox');

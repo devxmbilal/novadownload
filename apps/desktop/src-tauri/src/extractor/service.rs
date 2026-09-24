@@ -64,7 +64,7 @@ impl ExtractorService {
         Self { custom_path }
     }
 
-    /// Check if a URL looks like a supported media website (YouTube, TikTok, Facebook, etc.)
+    /// Check if a URL looks like a supported media website (YouTube, TikTok, Facebook, Dailymotion, etc.) or media stream
     pub fn is_media_url(url: &str) -> bool {
         let u = url.to_lowercase();
         u.contains("youtube.com")
@@ -78,10 +78,74 @@ impl ExtractorService {
             || u.contains("vimeo.com")
             || u.contains("reddit.com")
             || u.contains("dailymotion.com")
+            || u.contains("dai.ly")
             || u.contains("twitch.tv")
             || u.contains("soundcloud.com")
             || u.contains("bilibili.com")
             || u.contains("pinterest.com")
+            || u.contains(".m3u8")
+            || u.contains(".mpd")
+    }
+
+    /// Normalize streaming / player URLs (e.g. geo.dailymotion.com embed player -> canonical dailymotion video URL)
+    pub fn normalize_url(url: &str) -> String {
+        let trimmed = url.trim();
+
+        // 1. Dailymotion geo player / embed URLs:
+        // Examples:
+        // https://geo.dailymotion.com/player/xtv3w.html?video=x8xyz12
+        // https://geo.dailymotion.com/player.html?video=k12345
+        // https://www.dailymotion.com/embed/video/x8xyz12
+        // https://dai.ly/x8xyz12
+        if trimmed.contains("dailymotion.com") || trimmed.contains("dai.ly") {
+            // Check query string for video=... or videoId=...
+            if let Some(pos) = trimmed.find("video=") {
+                let rest = &trimmed[pos + 6..];
+                let vid_id = rest.split('&').next().unwrap_or(rest).split('#').next().unwrap_or(rest);
+                if !vid_id.is_empty() {
+                    let clean_id = vid_id.trim_matches(|c: char| !c.is_alphanumeric());
+                    if !clean_id.is_empty() {
+                        return format!("https://www.dailymotion.com/video/{}", clean_id);
+                    }
+                }
+            }
+
+            if let Some(pos) = trimmed.find("videoId=") {
+                let rest = &trimmed[pos + 8..];
+                let vid_id = rest.split('&').next().unwrap_or(rest).split('#').next().unwrap_or(rest);
+                if !vid_id.is_empty() {
+                    let clean_id = vid_id.trim_matches(|c: char| !c.is_alphanumeric());
+                    if !clean_id.is_empty() {
+                        return format!("https://www.dailymotion.com/video/{}", clean_id);
+                    }
+                }
+            }
+
+            // Check path for /embed/video/x... or /video/x... or /dai.ly/x...
+            if let Some(pos) = trimmed.find("/video/") {
+                let rest = &trimmed[pos + 7..];
+                let vid_id = rest.split('?').next().unwrap_or(rest).split('#').next().unwrap_or(rest);
+                if !vid_id.is_empty() {
+                    let clean_id = vid_id.trim_matches(|c: char| !c.is_alphanumeric());
+                    if !clean_id.is_empty() {
+                        return format!("https://www.dailymotion.com/video/{}", clean_id);
+                    }
+                }
+            }
+
+            if let Some(pos) = trimmed.find("dai.ly/") {
+                let rest = &trimmed[pos + 7..];
+                let vid_id = rest.split('?').next().unwrap_or(rest).split('#').next().unwrap_or(rest);
+                if !vid_id.is_empty() {
+                    let clean_id = vid_id.trim_matches(|c: char| !c.is_alphanumeric());
+                    if !clean_id.is_empty() {
+                        return format!("https://www.dailymotion.com/video/{}", clean_id);
+                    }
+                }
+            }
+        }
+
+        trimmed.to_string()
     }
 
     /// Resolve path to yt-dlp executable
@@ -208,6 +272,7 @@ impl ExtractorService {
     /// Extract media metadata and available formats for a video URL
     pub async fn extract_info(&self, app: &AppHandle, url: &str) -> AppResult<MediaInfo> {
         let bin_path = self.ensure_binary(app).await?;
+        let normalized_url = Self::normalize_url(url);
 
         let output = Command::new(&bin_path)
             .args(&[
@@ -215,7 +280,7 @@ impl ExtractorService {
                 "--no-warnings",
                 "--no-playlist",
                 "--skip-download",
-                url,
+                &normalized_url,
             ])
             .output()
             .await
@@ -243,11 +308,35 @@ impl ExtractorService {
 
         let mut formats: Vec<MediaFormat> = Vec::new();
         if let Some(raw_formats) = raw["formats"].as_array() {
+            // Check if there are standard direct progressive / DASH formats (protocol http/https)
+            let has_direct_formats = raw_formats.iter().any(|f| {
+                let proto = f["protocol"].as_str().unwrap_or("");
+                let fid = f["format_id"].as_str().unwrap_or("");
+                (proto == "https" || proto == "http") && !fid.starts_with("sb")
+            });
+
             for f in raw_formats {
                 let format_id = match f["format_id"].as_str() {
                     Some(id) => id.to_string(),
                     None => continue,
                 };
+
+                // Skip storyboard / preview thumbnail formats
+                if format_id.starts_with("sb") {
+                    continue;
+                }
+
+                let protocol = f["protocol"].as_str().unwrap_or("https");
+                let format_note = f["format_note"].as_str().map(|s| s.to_string());
+                let is_m3u8 = protocol.contains("m3u8");
+                let is_premium = format_note.as_deref().map(|n| n.to_lowercase().contains("premium")).unwrap_or(false);
+
+                // If direct http/https formats exist, skip HLS/m3u8 manifests and premium variants
+                // which have bloated bitrates and lack real stream filesizes
+                if has_direct_formats && (is_m3u8 || is_premium) {
+                    continue;
+                }
+
                 let ext = f["ext"].as_str().unwrap_or("mp4").to_string();
                 let vcodec = f["vcodec"].as_str().filter(|&v| v != "none").map(|s| s.to_string());
                 let acodec = f["acodec"].as_str().filter(|&a| a != "none").map(|s| s.to_string());
@@ -272,7 +361,6 @@ impl ExtractorService {
                         }
                     });
 
-                let format_note = f["format_note"].as_str().map(|s| s.to_string());
                 let filesize = f["filesize"].as_i64();
                 let mut filesize_approx = f["filesize_approx"].as_i64();
                 let tbr = f["tbr"].as_f64();
@@ -294,8 +382,8 @@ impl ExtractorService {
 
                     if let (Some(br), Some(dur)) = (bitrate, duration) {
                         if br > 0.0 && dur > 0.0 {
-                            // br in kbps -> bytes: (br * 1024 / 8) * dur
-                            filesize_approx = Some(((br * 1024.0 / 8.0) * dur) as i64);
+                            // Standard kbps to bytes: (br * 1000.0 / 8.0) * dur
+                            filesize_approx = Some(((br * 1000.0 / 8.0) * dur) as i64);
                         }
                     }
                 }
@@ -317,23 +405,40 @@ impl ExtractorService {
             }
         }
 
-        // Calculate best audio stream size to combine with video-only streams (e.g. YouTube DASH)
-        let best_audio_size = formats
+        // Calculate standard audio stream size to combine with video-only streams (e.g. YouTube DASH)
+        // yt-dlp by default selects standard audio stream ~128kbps (e.g. itag 140 m4a or 251 opus)
+        let standard_audio_size = formats
             .iter()
             .filter(|f| f.has_audio && !f.has_video)
-            .map(|f| f.filesize.or(f.filesize_approx).unwrap_or(0))
-            .max()
+            .filter_map(|f| {
+                let sz = f.filesize.or(f.filesize_approx).unwrap_or(0);
+                if sz > 0 {
+                    // Check if audio bitrate is standard (e.g. <= 256kbps or reasonable)
+                    let abr = f.tbr.unwrap_or(128.0);
+                    Some((abr, sz))
+                } else {
+                    None
+                }
+            })
+            // Prefer audio around 128-160kbps, which matches yt-dlp default bestaudio
+            .min_by(|a, b| {
+                let diff_a = (a.0 - 128.0).abs();
+                let diff_b = (b.0 - 128.0).abs();
+                diff_a.partial_cmp(&diff_b).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(_, sz)| sz)
             .unwrap_or(0);
 
-        if best_audio_size > 0 {
+        if standard_audio_size > 0 {
             for f in &mut formats {
+                // ONLY add audio size if this format has video and DOES NOT already have audio
                 if f.has_video && !f.has_audio {
                     if let Some(ref mut sz) = f.filesize {
-                        *sz += best_audio_size;
+                        *sz += standard_audio_size;
                     } else if let Some(ref mut approx) = f.filesize_approx {
-                        *approx += best_audio_size;
+                        *approx += standard_audio_size;
                     } else if duration.is_some() {
-                        f.filesize_approx = Some(best_audio_size);
+                        f.filesize_approx = Some(standard_audio_size);
                     }
                 }
             }
